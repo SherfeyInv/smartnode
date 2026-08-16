@@ -5,8 +5,8 @@ import (
 )
 
 const (
-	lighthouseTagPortableTest string = "sigp/lighthouse:v5.3.0"
-	lighthouseTagPortableProd string = "sigp/lighthouse:v5.3.0"
+	lighthouseTagPortableTest string = "sigp/lighthouse:v8.2.1"
+	lighthouseTagPortableProd string = "sigp/lighthouse:v8.2.1"
 	defaultLhMaxPeers         uint16 = 100
 )
 
@@ -32,6 +32,9 @@ type LighthouseConfig struct {
 	// The port to use for gossip traffic using the QUIC protocol
 	P2pQuicPort config.Parameter `yaml:"p2pQuicPort,omitempty"`
 }
+
+// Type assertion for LighthouseConfig
+var _ config.ConsensusConfig = &LighthouseConfig{}
 
 // Generates a new Lighthouse configuration
 func NewLighthouseConfig(cfg *RocketPoolConfig) *LighthouseConfig {
@@ -67,7 +70,7 @@ func NewLighthouseConfig(cfg *RocketPoolConfig) *LighthouseConfig {
 			Default: map[config.Network]interface{}{
 				config.Network_Mainnet: lighthouseTagPortableProd,
 				config.Network_Devnet:  lighthouseTagPortableTest,
-				config.Network_Holesky: lighthouseTagPortableTest,
+				config.Network_Testnet: lighthouseTagPortableTest,
 			},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2, config.ContainerID_Validator},
 			CanBeBlank:         false,
@@ -77,7 +80,7 @@ func NewLighthouseConfig(cfg *RocketPoolConfig) *LighthouseConfig {
 		AdditionalBnFlags: config.Parameter{
 			ID:                 "additionalBnFlags",
 			Name:               "Additional Beacon Client Flags",
-			Description:        "Additional custom command line flags you want to pass Lighthouse's Beacon Client, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass Lighthouse's Beacon Client, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2},
@@ -88,7 +91,7 @@ func NewLighthouseConfig(cfg *RocketPoolConfig) *LighthouseConfig {
 		AdditionalVcFlags: config.Parameter{
 			ID:                 "additionalVcFlags",
 			Name:               "Additional Validator Client Flags",
-			Description:        "Additional custom command line flags you want to pass Lighthouse's Validator Client, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass Lighthouse's Validator Client, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
@@ -129,7 +132,7 @@ func (cfg *LighthouseConfig) GetName() string {
 	return "Lighthouse"
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *LighthouseConfig) GetConfigTitle() string {
 	return cfg.Title
 }

@@ -1,15 +1,24 @@
 package collectors
 
 import (
+	"context"
 	"fmt"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/smartnode/rocketpool/api/pdao"
-	"github.com/rocket-pool/smartnode/shared/services/config"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/network"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/rocketpool/api/pdao"
+	"github.com/rocket-pool/smartnode/shared/math"
+	"github.com/rocket-pool/smartnode/shared/services"
+	"github.com/rocket-pool/smartnode/shared/services/config"
+	"github.com/rocket-pool/smartnode/shared/services/contracts"
+	"github.com/rocket-pool/smartnode/shared/services/proposals"
+	"github.com/rocket-pool/smartnode/shared/types/api"
 )
 
 // Time to wait to make new Snapshot API calls
@@ -17,7 +26,7 @@ const hoursToWait float64 = 6
 
 // Represents the collector for Snapshot metrics
 type SnapshotCollector struct {
-	// the number of active Snashot proposals
+	// the number of active Snapshot proposals
 	activeProposals *prometheus.Desc
 
 	// the number of past Snapshot proposals
@@ -35,14 +44,26 @@ type SnapshotCollector struct {
 	// The current delegate voting power on Snapshot
 	delegateVotingPower *prometheus.Desc
 
+	// The Rocket Pool Contract manager
+	rp *rocketpool.RocketPool
+
 	// The Rocket Pool config
 	cfg *config.RocketPoolConfig
+
+	// The Rocket Pool Execution Client manager
+	ec *services.ExecutionClientManager
+
+	// The Rocket Pool Beacon Client manager
+	bc *services.BeaconClientManager
+
+	// The RocketSignerRegistry Contract
+	reg *contracts.RocketSignerRegistry
 
 	// the node wallet address
 	nodeAddress common.Address
 
-	// the delegate address
-	delegateAddress common.Address
+	// the signalling address
+	signallingAddress common.Address
 
 	// Store values from the latest API call
 	cachedNodeVotingPower      float64
@@ -60,7 +81,7 @@ type SnapshotCollector struct {
 }
 
 // Create a new SnapshotCollector instance
-func NewSnapshotCollector(rp *rocketpool.RocketPool, cfg *config.RocketPoolConfig, nodeAddress common.Address, delegateAddress common.Address) *SnapshotCollector {
+func NewSnapshotCollector(rp *rocketpool.RocketPool, cfg *config.RocketPoolConfig, ec *services.ExecutionClientManager, bc *services.BeaconClientManager, reg *contracts.RocketSignerRegistry, nodeAddress common.Address, signallingAddress common.Address) *SnapshotCollector {
 	subsystem := "snapshot"
 	return &SnapshotCollector{
 		activeProposals: prometheus.NewDesc(prometheus.BuildFQName(namespace, subsystem, "proposals_active"),
@@ -87,10 +108,14 @@ func NewSnapshotCollector(rp *rocketpool.RocketPool, cfg *config.RocketPoolConfi
 			"The delegate current voting power on Snapshot",
 			nil, nil,
 		),
-		cfg:             cfg,
-		nodeAddress:     nodeAddress,
-		delegateAddress: delegateAddress,
-		logPrefix:       "Snapshot Collector",
+		rp:                rp,
+		cfg:               cfg,
+		ec:                ec,
+		bc:                bc,
+		reg:               reg,
+		nodeAddress:       nodeAddress,
+		signallingAddress: signallingAddress,
+		logPrefix:         "Snapshot Collector",
 	}
 }
 
@@ -109,38 +134,13 @@ func (collector *SnapshotCollector) Collect(channel chan<- prometheus.Metric) {
 
 	// Sync
 	var wg errgroup.Group
+	var err error
+	var propMgr *proposals.ProposalManager
+	var blockNumber uint64
+	var onchainVotingDelegate common.Address
 	activeProposals := float64(0)
 	closedProposals := float64(0)
-	votesActiveProposals := float64(0)
-	votesClosedProposals := float64(0)
-	handledProposals := map[string]bool{}
-
-	// Get the number of votes on Snapshot proposals
-	wg.Go(func() error {
-		if time.Since(collector.lastApiCallTimestamp).Hours() >= hoursToWait {
-			votedProposals, err := pdao.GetSnapshotVotedProposals(collector.cfg.Smartnode.GetSnapshotApiDomain(), collector.cfg.Smartnode.GetSnapshotID(), collector.nodeAddress, collector.delegateAddress)
-			if err != nil {
-				return fmt.Errorf("Error getting Snapshot voted proposals: %w", err)
-			}
-
-			for _, votedProposal := range votedProposals.Data.Votes {
-				_, exists := handledProposals[votedProposal.Proposal.Id]
-				if !exists {
-					if votedProposal.Proposal.State == "active" {
-						votesActiveProposals += 1
-					} else {
-						votesClosedProposals += 1
-					}
-					handledProposals[votedProposal.Proposal.Id] = true
-				}
-			}
-			collector.cachedVotesActiveProposals = votesActiveProposals
-			collector.cachedVotesClosedProposals = votesClosedProposals
-
-		}
-
-		return nil
-	})
+	blankAddress := common.Address{}
 
 	// Get the number of live Snapshot proposals
 	wg.Go(func() error {
@@ -152,9 +152,9 @@ func (collector *SnapshotCollector) Collect(channel chan<- prometheus.Metric) {
 
 			for _, proposal := range proposals.Data.Proposals {
 				if proposal.State == "active" {
-					activeProposals += 1
+					activeProposals++
 				} else {
-					closedProposals += 1
+					closedProposals++
 				}
 			}
 			collector.cachedActiveProposals = activeProposals
@@ -164,31 +164,38 @@ func (collector *SnapshotCollector) Collect(channel chan<- prometheus.Metric) {
 		return nil
 	})
 
-	// Get the node's voting power
+	// Get latest block number
 	wg.Go(func() error {
 		if time.Since(collector.lastApiCallTimestamp).Hours() >= hoursToWait {
-
-			votingPowerResponse, err := pdao.GetSnapshotVotingPower(collector.cfg.Smartnode.GetSnapshotApiDomain(), collector.cfg.Smartnode.GetSnapshotID(), collector.nodeAddress)
+			blockNumber, err = collector.ec.BlockNumber(context.Background())
 			if err != nil {
-				return fmt.Errorf("Error getting Snapshot voted proposals for node address: %w", err)
+				return fmt.Errorf("Error getting block number: %w", err)
 			}
+		}
+		return nil
 
-			collector.cachedNodeVotingPower = votingPowerResponse.Data.Vp.Vp
+	})
+
+	// Get the propMgr
+	wg.Go(func() error {
+		if time.Since(collector.lastApiCallTimestamp).Hours() >= hoursToWait {
+			propMgr, err = proposals.NewProposalManager(nil, collector.cfg, collector.rp, collector.bc)
+			if err != nil {
+				return fmt.Errorf("Error getting the prop manager: %w", err)
+			}
 		}
 		return nil
 	})
 
-	// Get the delegate's voting power
+	// Get the node onchain voting delegate
 	wg.Go(func() error {
 		if time.Since(collector.lastApiCallTimestamp).Hours() >= hoursToWait {
-			votingPowerResponse, err := pdao.GetSnapshotVotingPower(collector.cfg.Smartnode.GetSnapshotApiDomain(), collector.cfg.Smartnode.GetSnapshotID(), collector.delegateAddress)
+			onchainVotingDelegate, err = network.GetCurrentVotingDelegate(collector.rp, collector.nodeAddress, nil)
 			if err != nil {
-				return fmt.Errorf("Error getting Snapshot voted proposals for delegate address: %w", err)
+				return fmt.Errorf("Error getting the on-chain voting delegate: %w", err)
 			}
-
-			collector.cachedDelegateVotingPower = votingPowerResponse.Data.Vp.Vp
 		}
-		return nil
+		return err
 	})
 
 	// Wait for data
@@ -196,6 +203,53 @@ func (collector *SnapshotCollector) Collect(channel chan<- prometheus.Metric) {
 		collector.logError(err)
 		return
 	}
+
+	// Check if sufficient time has passed and voting is initialized
+	if time.Since(collector.lastApiCallTimestamp).Hours() >= hoursToWait {
+		// Get voting power for the node
+		nodeVotingPower, err := getVotingPower(propMgr, uint32(blockNumber), collector.nodeAddress)
+		if err != nil {
+			collector.logError(fmt.Errorf("error getting node voting power: %w", err))
+			collector.cachedNodeVotingPower = 0
+		} else {
+			collector.cachedNodeVotingPower = nodeVotingPower
+		}
+		if onchainVotingDelegate != blankAddress {
+			// Get voting power for the delegate
+			delegateVotingPower, err := getVotingPower(propMgr, uint32(blockNumber), onchainVotingDelegate)
+			if err != nil {
+				collector.logError(fmt.Errorf("error getting delegate voting power: %w", err))
+				collector.cachedDelegateVotingPower = 0
+			} else {
+				collector.cachedDelegateVotingPower = delegateVotingPower
+			}
+		} else {
+			collector.cachedDelegateVotingPower = 0
+		}
+	}
+
+	// Get the number of votes on Snapshot proposals
+	if time.Since(collector.lastApiCallTimestamp).Hours() >= hoursToWait {
+		// Check if there is a delegate voting on behalf of the node
+		if onchainVotingDelegate != blankAddress || onchainVotingDelegate != collector.nodeAddress {
+			delegateSignallingAddress, err := collector.reg.NodeToSigner(&bind.CallOpts{}, onchainVotingDelegate)
+			if err != nil {
+				collector.logError(fmt.Errorf("Error getting the signalling address: %w", err))
+			}
+			votedProposals, err := pdao.GetSnapshotVotedProposals(collector.cfg.Smartnode.GetSnapshotApiDomain(), collector.cfg.Smartnode.GetSnapshotID(), onchainVotingDelegate, delegateSignallingAddress)
+			if err != nil {
+				collector.logError(fmt.Errorf("Error getting Snapshot voted proposals: %w", err))
+			}
+			collector.collectVotes(votedProposals)
+		} else {
+			votedProposals, err := pdao.GetSnapshotVotedProposals(collector.cfg.Smartnode.GetSnapshotApiDomain(), collector.cfg.Smartnode.GetSnapshotID(), collector.nodeAddress, collector.signallingAddress)
+			if err != nil {
+				collector.logError(fmt.Errorf("Error getting Snapshot voted proposals: %w", err))
+			}
+			collector.collectVotes(votedProposals)
+		}
+	}
+
 	if time.Since(collector.lastApiCallTimestamp).Hours() >= hoursToWait {
 		collector.lastApiCallTimestamp = time.Now()
 	}
@@ -217,4 +271,35 @@ func (collector *SnapshotCollector) Collect(channel chan<- prometheus.Metric) {
 // Log error messages
 func (collector *SnapshotCollector) logError(err error) {
 	fmt.Printf("[%s] %s\n", collector.logPrefix, err.Error())
+}
+
+func getVotingPower(propMgr *proposals.ProposalManager, blockNumber uint32, address common.Address) (float64, error) {
+	// Get the total voting power
+	totalDelegatedVP, _, _, err := propMgr.GetArtifactsForVoting(blockNumber, address)
+	if err != nil {
+		return 0, fmt.Errorf("error getting voting power: %w", err)
+	}
+
+	return math.WeiToEth(totalDelegatedVP), nil
+}
+
+func (collector *SnapshotCollector) collectVotes(votedProposals *api.SnapshotVotedProposals) {
+	handledProposals := map[string]bool{}
+	votesActiveProposals := float64(0)
+	votesClosedProposals := float64(0)
+
+	for _, votedProposal := range votedProposals.Data.Votes {
+		_, exists := handledProposals[votedProposal.Proposal.Id]
+		if !exists {
+			if votedProposal.Proposal.State == "active" {
+				votesActiveProposals++
+			} else {
+				votesClosedProposals++
+			}
+			handledProposals[votedProposal.Proposal.Id] = true
+		}
+	}
+	collector.cachedVotesActiveProposals = votesActiveProposals
+	collector.cachedVotesClosedProposals = votesClosedProposals
+
 }

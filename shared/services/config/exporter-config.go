@@ -5,7 +5,7 @@ import (
 )
 
 // Constants
-const exporterTag string = "prom/node-exporter:v1.8.2"
+const exporterTag string = "prom/node-exporter:v1.12.0"
 
 // Defaults
 const defaultExporterRootFs bool = false
@@ -54,7 +54,7 @@ func NewExporterConfig(cfg *RocketPoolConfig) *ExporterConfig {
 		AdditionalFlags: config.Parameter{
 			ID:                 "additionalFlags",
 			Name:               "Additional Exporter Flags",
-			Description:        "Additional custom command line flags you want to pass to the Node Exporter, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass to the Node Exporter, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Grafana},
@@ -73,7 +73,7 @@ func (cfg *ExporterConfig) GetParameters() []*config.Parameter {
 	}
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *ExporterConfig) GetConfigTitle() string {
 	return cfg.Title
 }

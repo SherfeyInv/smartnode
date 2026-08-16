@@ -1,20 +1,20 @@
 package security
 
 import (
-	"fmt"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 
-	"github.com/rocket-pool/rocketpool-go/dao"
-	"github.com/rocket-pool/rocketpool-go/dao/security"
-	rptypes "github.com/rocket-pool/rocketpool-go/types"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/dao"
+	"github.com/rocket-pool/smartnode/bindings/dao/security"
+	rptypes "github.com/rocket-pool/smartnode/bindings/types"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canVoteOnProposal(c *cli.Context, proposalId uint64) (*api.SecurityCanVoteOnProposalResponse, error) {
+func canVoteOnProposal(c *cli.Command, proposalId uint64) (*api.SecurityCanVoteOnProposalResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeSecurityMember(c); err != nil {
@@ -90,9 +90,9 @@ func canVoteOnProposal(c *cli.Context, proposalId uint64) (*api.SecurityCanVoteO
 		if err != nil {
 			return err
 		}
-		gasInfo, err := security.EstimateVoteOnProposalGas(rp, proposalId, false, opts)
+		gasLimits, err := security.EstimateVoteOnProposalGas(rp, proposalId, false, opts)
 		if err == nil {
-			response.GasInfo = gasInfo
+			response.GasLimits = gasLimits
 		}
 		return err
 	})
@@ -106,19 +106,15 @@ func canVoteOnProposal(c *cli.Context, proposalId uint64) (*api.SecurityCanVoteO
 	response.JoinedAfterCreated = (memberJoinedTime >= proposalCreatedTime)
 
 	// Update & return response
-	response.CanVote = !(response.DoesNotExist || response.InvalidState || response.JoinedAfterCreated || response.AlreadyVoted)
+	response.CanVote = !response.DoesNotExist && !response.InvalidState && !response.JoinedAfterCreated && !response.AlreadyVoted
 	return &response, nil
 
 }
 
-func voteOnProposal(c *cli.Context, proposalId uint64, support bool) (*api.SecurityVoteOnProposalResponse, error) {
+func voteOnProposal(c *cli.Command, proposalId uint64, support bool, opts *bind.TransactOpts) (*api.SecurityVoteOnProposalResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeSecurityMember(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -128,18 +124,6 @@ func voteOnProposal(c *cli.Context, proposalId uint64, support bool) (*api.Secur
 
 	// Response
 	response := api.SecurityVoteOnProposalResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Vote on proposal
 	hash, err := security.VoteOnProposal(rp, proposalId, support, opts)

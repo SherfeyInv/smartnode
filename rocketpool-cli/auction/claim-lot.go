@@ -4,21 +4,20 @@ import (
 	"fmt"
 	"strconv"
 
-	rocketpoolapi "github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
-	"github.com/urfave/cli"
+	"github.com/rocket-pool/smartnode/bindings/transactions/gaslimit"
 
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
-	"github.com/rocket-pool/smartnode/shared/utils/math"
 )
 
-func claimFromLot(c *cli.Context) error {
+func claimFromLot(lot string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -46,17 +45,17 @@ func claimFromLot(c *cli.Context) error {
 
 	// Get selected lots
 	var selectedLots []api.LotDetails
-	if c.String("lot") == "all" {
+	if lot == "all" {
 
 		// Select all claimable lots
 		selectedLots = claimableLots
 
-	} else if c.String("lot") != "" {
+	} else if lot != "" {
 
 		// Get selected lot index
-		selectedIndex, err := strconv.ParseUint(c.String("lot"), 10, 64)
+		selectedIndex, err := strconv.ParseUint(lot, 10, 64)
 		if err != nil {
-			return fmt.Errorf("Invalid lot ID '%s': %w", c.String("lot"), err)
+			return fmt.Errorf("Invalid lot ID '%s': %w", lot, err)
 		}
 
 		// Get matching lot
@@ -78,9 +77,9 @@ func claimFromLot(c *cli.Context) error {
 		options := make([]string, len(claimableLots)+1)
 		options[0] = "All available lots"
 		for li, lot := range claimableLots {
-			options[li+1] = fmt.Sprintf("lot %d (%.6f ETH bid @ %.6f ETH per RPL)", lot.Details.Index, math.RoundDown(eth.WeiToEth(lot.Details.AddressBidAmount), 6), math.RoundDown(eth.WeiToEth(lot.Details.CurrentPrice), 6))
+			options[li+1] = fmt.Sprintf("lot %d (%.6f ETH bid @ %.6f ETH per RPL)", lot.Details.Index, math.RoundDown(math.WeiToEth(lot.Details.AddressBidAmount), 6), math.RoundDown(math.WeiToEth(lot.Details.CurrentPrice), 6))
 		}
-		selected, _ := cliutils.Select("Please select a lot to claim RPL from:", options)
+		selected, _ := prompt.Select("Please select a lot to claim RPL from:", options)
 
 		// Get lots
 		if selected == 0 {
@@ -92,29 +91,29 @@ func claimFromLot(c *cli.Context) error {
 	}
 
 	// Get the total gas limit estimate
-	var totalGas uint64 = 0
-	var totalSafeGas uint64 = 0
-	var gasInfo rocketpoolapi.GasInfo
+	var totalGas uint64
+	var totalSafeGas uint64
+	var gasLimits gaslimit.Limits
 	for _, lot := range selectedLots {
 		canResponse, err := rp.CanClaimFromLot(lot.Details.Index)
 		if err != nil {
 			return fmt.Errorf("Error checking if claiming lot %d is possible: %w", lot.Details.Index, err)
 		}
-		gasInfo = canResponse.GasInfo
-		totalGas += canResponse.GasInfo.EstGasLimit
-		totalSafeGas += canResponse.GasInfo.SafeGasLimit
+		gasLimits = canResponse.GasLimits
+		totalGas += canResponse.GasLimits.Estimated
+		totalSafeGas += canResponse.GasLimits.Safe
 	}
-	gasInfo.EstGasLimit = totalGas
-	gasInfo.SafeGasLimit = totalSafeGas
+	gasLimits.Estimated = totalGas
+	gasLimits.Safe = totalSafeGas
 
 	// Get max fees
-	g, err := gas.GetMaxFeeAndLimit(gasInfo, rp, c.Bool("yes"))
+	g, err := gas.GetMaxFeeAndLimit(gasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm(fmt.Sprintf("Are you sure you want to claim %d lots?", len(selectedLots)))) {
+	if prompt.Declined(yes, "Are you sure you want to claim %d lots?", len(selectedLots)) {
 		fmt.Println("Cancelled.")
 		return nil
 	}

@@ -5,9 +5,9 @@ import (
 	"math/rand"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/pbnjay/memory"
+
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
 )
 
@@ -25,7 +25,7 @@ func createLocalCcStep(wiz *wizard, currentStep int, totalSteps int) *choiceWiza
 		clients = append(clients, client)
 	}
 
-	helperText := "Please select the Consensus client you would like to use.\n\nHighlight each one to see a brief description of it, or go to https://docs.rocketpool.net/guides/node/eth-clients.html#eth2-clients to learn more about them."
+	helperText := "Please select the Consensus client you would like to use.\n\nHighlight each one to see a brief description of it, or go to https://docs.rocketpool.net/node-staking/eth-clients#eth2-clients to learn more about them."
 
 	show := func(modal *choiceModalLayout) {
 		wiz.md.setPage(modal.page)
@@ -132,7 +132,6 @@ func selectRandomCC(goodOptions []cfgtypes.ParameterOption, includeSupermajority
 	}
 
 	// Select a random client
-	rand.Seed(time.Now().UnixNano())
 	selectedClient := filteredClients[rand.Intn(len(filteredClients))]
 	wiz.md.Config.ConsensusClient.Value = selectedClient
 

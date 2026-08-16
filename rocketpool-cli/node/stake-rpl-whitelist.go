@@ -5,17 +5,17 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/urfave/cli"
 
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
 )
 
-func addAddressToStakeRplWhitelist(c *cli.Context, addressOrENS string) error {
+func addAddressToStakeRplWhitelist(addressOrENS string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -45,13 +45,13 @@ func addAddressToStakeRplWhitelist(c *cli.Context, addressOrENS string) error {
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canResponse.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canResponse.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm(fmt.Sprintf("Are you sure you want to allow %s to stake RPL for your node?", addressString))) {
+	if prompt.Declined(yes, "Are you sure you want to allow %s to stake RPL for your node?", addressString) {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -73,10 +73,10 @@ func addAddressToStakeRplWhitelist(c *cli.Context, addressOrENS string) error {
 	return nil
 }
 
-func removeAddressFromStakeRplWhitelist(c *cli.Context, addressOrENS string) error {
+func removeAddressFromStakeRplWhitelist(addressOrENS string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -106,13 +106,13 @@ func removeAddressFromStakeRplWhitelist(c *cli.Context, addressOrENS string) err
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canResponse.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canResponse.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm(fmt.Sprintf("Are you sure you want to remove %s from your RPL staking whitelist?", addressString))) {
+	if prompt.Declined(yes, "Are you sure you want to remove %s from your RPL staking whitelist?", addressString) {
 		fmt.Println("Cancelled.")
 		return nil
 	}

@@ -7,7 +7,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/goccy/go-json"
 
-	hexutil "github.com/rocket-pool/smartnode/shared/utils/hex"
+	hexutil "github.com/rocket-pool/smartnode/shared/hex"
 )
 
 // Request types
@@ -32,9 +32,11 @@ type BLSToExecutionChangeRequest struct {
 // Response types
 type SyncStatusResponse struct {
 	Data struct {
-		IsSyncing    bool     `json:"is_syncing"`
 		HeadSlot     uinteger `json:"head_slot"`
 		SyncDistance uinteger `json:"sync_distance"`
+		IsSyncing    bool     `json:"is_syncing"`
+		IsOptimistic bool     `json:"is_optimistic"`
+		ELOffline    bool     `json:"el_offline"`
 	} `json:"data"`
 }
 type Eth2ConfigResponse struct {
@@ -43,6 +45,8 @@ type Eth2ConfigResponse struct {
 		SlotsPerEpoch                uinteger  `json:"SLOTS_PER_EPOCH"`
 		CapellaForkVersion           byteArray `json:"CAPELLA_FORK_VERSION"`
 		EpochsPerSyncCommitteePeriod uinteger  `json:"EPOCHS_PER_SYNC_COMMITTEE_PERIOD"`
+		ShardCommitteePeriod         uinteger  `json:"SHARD_COMMITTEE_PERIOD"`
+		GloasForkEpoch               *uinteger `json:"GLOAS_FORK_EPOCH"`
 	} `json:"data"`
 }
 type Eth2DepositContractResponse struct {
@@ -94,9 +98,18 @@ type BeaconBlockResponse struct {
 				} `json:"eth1_data"`
 				Attestations     []Attestation `json:"attestations"`
 				ExecutionPayload *struct {
-					FeeRecipient byteArray `json:"fee_recipient"`
-					BlockNumber  uinteger  `json:"block_number"`
+					FeeRecipient byteArray    `json:"fee_recipient"`
+					BlockNumber  uinteger     `json:"block_number"`
+					Withdrawals  []Withdrawal `json:"withdrawals"`
 				} `json:"execution_payload"`
+				// Gloas (EIP-7732 ePBS): execution payload is no longer embedded
+				// in the beacon block; only a signed bid with the payload hash.
+				SignedExecutionPayloadBid *struct {
+					Message *struct {
+						FeeRecipient byteArray `json:"fee_recipient"`
+						BlockHash    byteArray `json:"block_hash"`
+					} `json:"message"`
+				} `json:"signed_execution_payload_bid"`
 			} `json:"body"`
 		} `json:"message"`
 	} `json:"data"`
@@ -112,6 +125,12 @@ type BeaconBlockHeaderResponse struct {
 				ProposerIndex string   `json:"proposer_index"`
 			} `json:"message"`
 		} `json:"header"`
+	} `json:"data"`
+}
+type ValidatorBalancesResponse struct {
+	Data []struct {
+		Index   string `json:"index"`
+		Balance string `json:"balance"`
 	} `json:"data"`
 }
 type ValidatorsResponse struct {
@@ -157,6 +176,14 @@ type Attestation struct {
 		Slot  uinteger `json:"slot"`
 		Index uinteger `json:"index"`
 	} `json:"data"`
+	CommitteeBits string `json:"committee_bits"`
+}
+
+type Withdrawal struct {
+	Index          string    `json:"index"`
+	ValidatorIndex string    `json:"validator_index"`
+	Address        byteArray `json:"address"`
+	Amount         string    `json:"amount"`
 }
 
 // Unsigned integer type

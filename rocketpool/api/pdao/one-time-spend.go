@@ -1,19 +1,19 @@
 package pdao
 
 import (
-	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/dao/protocol"
-	"github.com/rocket-pool/rocketpool-go/node"
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/protocol"
+	"github.com/rocket-pool/smartnode/bindings/node"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
-	"github.com/urfave/cli"
 )
 
-func canProposeOneTimeSpend(c *cli.Context, invoiceID string, recipient common.Address, amount *big.Int) (*api.PDAOCanProposeOneTimeSpendResponse, error) {
+func canProposeOneTimeSpend(c *cli.Command, invoiceID string, recipient common.Address, amount *big.Int, customMessage string) (*api.PDAOCanProposeOneTimeSpendResponse, error) {
 	// Get services
 	w, err := services.GetWallet(c)
 	if err != nil {
@@ -66,29 +66,24 @@ func canProposeOneTimeSpend(c *cli.Context, invoiceID string, recipient common.A
 	}
 
 	// Try proposing
-	message := fmt.Sprintf("one-time spend for invoice %s", invoiceID)
 	blockNumber, pollard, err := createPollard(rp, cfg, bc)
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := protocol.EstimateProposeOneTimeTreasurySpendGas(rp, message, invoiceID, recipient, amount, blockNumber, pollard, opts)
+	gasLimits, err := protocol.EstimateProposeOneTimeTreasurySpendGas(rp, customMessage, invoiceID, recipient, amount, blockNumber, pollard, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	// Update & return response
 	response.BlockNumber = blockNumber
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return &response, nil
 }
 
-func proposeOneTimeSpend(c *cli.Context, invoiceID string, recipient common.Address, amount *big.Int, blockNumber uint32) (*api.PDAOProposeOneTimeSpendResponse, error) {
+func proposeOneTimeSpend(c *cli.Command, invoiceID string, recipient common.Address, amount *big.Int, blockNumber uint32, customMessage string, opts *bind.TransactOpts) (*api.PDAOProposeOneTimeSpendResponse, error) {
 	// Get services
 	cfg, err := services.GetConfig(c)
-	if err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
 	if err != nil {
 		return nil, err
 	}
@@ -104,25 +99,12 @@ func proposeOneTimeSpend(c *cli.Context, invoiceID string, recipient common.Addr
 	// Response
 	response := api.PDAOProposeOneTimeSpendResponse{}
 
-	// Get node account
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
-
 	// Propose
-	message := fmt.Sprintf("one-time spend for invoice %s", invoiceID)
 	pollard, err := getPollard(rp, cfg, bc, blockNumber)
 	if err != nil {
 		return nil, err
 	}
-	proposalID, hash, err := protocol.ProposeOneTimeTreasurySpend(rp, message, invoiceID, recipient, amount, blockNumber, pollard, opts)
+	proposalID, hash, err := protocol.ProposeOneTimeTreasurySpend(rp, customMessage, invoiceID, recipient, amount, blockNumber, pollard, opts)
 	if err != nil {
 		return nil, err
 	}

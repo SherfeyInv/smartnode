@@ -3,73 +3,118 @@ package rewards
 import (
 	"fmt"
 	"math/big"
+	"slices"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
+	"github.com/ipfs/go-cid"
+
+	log "github.com/rocket-pool/smartnode/shared/logger"
 	"github.com/rocket-pool/smartnode/shared/services/beacon"
 	"github.com/rocket-pool/smartnode/shared/services/config"
 	"github.com/rocket-pool/smartnode/shared/services/state"
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
-	"github.com/rocket-pool/smartnode/shared/utils/log"
 )
 
 // Settings
 const (
 	SmoothingPoolDetailsBatchSize uint64 = 8
-	TestingInterval               uint64 = 1000000000 // A large number that won't ever actually be hit
+
+	// Obsoleted Treegen intervals (for documentation only)
+	// HoleskyV2Interval uint64 = 0
+	// HoleskyV3Interval uint64 = 0
+	// HoleskyV4Interval uint64 = 0
+	// HoleskyV5Interval uint64 = 0
+	// HoleskyV6Interval uint64 = 0
+	// HoleskyV7Interval uint64 = 0
+	// MainnetV2Interval uint64 = 4
+	// MainnetV3Interval uint64 = 5
+	// MainnetV4Interval uint64 = 6
+	// MainnetV5Interval uint64 = 8
+	// MainnetV6Interval uint64 = 12
+	// MainnetV7Interval uint64 = 15
+	// MainnetV8Interval  uint64 = 18
+	// DevnetV2Interval uint64 = 0
+	// DevnetV3Interval uint64 = 0
+	// DevnetV4Interval uint64 = 0
+	// DevnetV5Interval uint64 = 0
+	// DevnetV6Interval uint64 = 0
+	// DevnetV7Interval uint64 = 0
+	// HoleskyV2Interval uint64 = 0
+	// HoleskyV3Interval uint64 = 0
+	// HoleskyV4Interval uint64 = 0
+	// HoleskyV5Interval uint64 = 0
+	// HoleskyV6Interval uint64 = 0
+	// HoleskyV7Interval uint64 = 0
 
 	// Mainnet intervals
-	MainnetV2Interval uint64 = 4
-	MainnetV3Interval uint64 = 5
-	MainnetV4Interval uint64 = 6
-	MainnetV5Interval uint64 = 8
-	MainnetV6Interval uint64 = 12
-	MainnetV7Interval uint64 = 15
-	MainnetV8Interval uint64 = 18
-
+	MainnetV9Interval  uint64 = 29
+	MainnetV10Interval uint64 = 30
+	MainnetV11Interval uint64 = 46
 	// Devnet intervals
-	DevnetV2Interval uint64 = 0
-	DevnetV3Interval uint64 = 0
-	DevnetV4Interval uint64 = 0
-	DevnetV5Interval uint64 = 0
-	DevnetV6Interval uint64 = 0
-	DevnetV7Interval uint64 = 0
+	DevnetV11Interval uint64 = 0
 
-	// Holesky intervals
-	HoleskyV2Interval uint64 = 0
-	HoleskyV3Interval uint64 = 0
-	HoleskyV4Interval uint64 = 0
-	HoleskyV5Interval uint64 = 0
-	HoleskyV6Interval uint64 = 0
-	HoleskyV7Interval uint64 = 0
-	HoleskyV8Interval uint64 = 93
+	// Testnet intervals
+	TestnetV10Interval uint64 = 0
+	TestnetV11Interval uint64 = 140
 )
+
+func GetMainnetRulesetVersion(interval uint64) uint64 {
+	if interval >= MainnetV10Interval {
+		return 10
+	}
+	return 9
+}
+
+func GetRulesetVersion(network cfgtypes.Network, interval uint64) uint64 {
+	switch network {
+	case cfgtypes.Network_Mainnet:
+		return GetMainnetRulesetVersion(interval)
+	case cfgtypes.Network_Testnet:
+		return 10
+	case cfgtypes.Network_Devnet:
+		return 10
+	default:
+		return 10
+	}
+}
 
 type TreeGenerator struct {
 	rewardsIntervalInfos map[uint64]rewardsIntervalInfo
 	logger               *log.ColorLogger
 	logPrefix            string
-	rp                   *rocketpool.RocketPool
+	rp                   RewardsExecutionClient
 	cfg                  *config.RocketPoolConfig
 	bc                   beacon.Client
 	index                uint64
 	startTime            time.Time
 	endTime              time.Time
-	consensusBlock       uint64
+	snapshotEnd          *SnapshotEnd
 	elSnapshotHeader     *types.Header
 	intervalsPassed      uint64
 	generatorImpl        treeGeneratorImpl
 	approximatorImpl     treeGeneratorImpl
 }
 
-type treeGeneratorImpl interface {
-	generateTree(rp *rocketpool.RocketPool, cfg *config.RocketPoolConfig, bc beacon.Client) (IRewardsFile, error)
-	approximateStakerShareOfSmoothingPool(rp *rocketpool.RocketPool, cfg *config.RocketPoolConfig, bc beacon.Client) (*big.Int, error)
-	getRulesetVersion() uint64
+type SnapshotEnd struct {
+	// Slot is the last slot of the interval
+	Slot uint64
+	// ConsensusBlock is the last non-missed slot of the interval
+	ConsensusBlock uint64
+	// ExecutionBlock is the EL block number of ConsensusBlock
+	ExecutionBlock uint64
 }
 
-func NewTreeGenerator(logger *log.ColorLogger, logPrefix string, rp *rocketpool.RocketPool, cfg *config.RocketPoolConfig, bc beacon.Client, index uint64, startTime time.Time, endTime time.Time, consensusBlock uint64, elSnapshotHeader *types.Header, intervalsPassed uint64, state *state.NetworkState, rollingRecord *RollingRecord) (*TreeGenerator, error) {
+type treeGeneratorImpl interface {
+	generateTree(rp RewardsExecutionClient, networkName string, previousRewardsPoolAddresses []common.Address, bc RewardsBeaconClient) (*GenerateTreeResult, error)
+	approximateStakerShareOfSmoothingPool(rp RewardsExecutionClient, networkName string, previousRewardsPoolAddresses []common.Address, bc RewardsBeaconClient) (*big.Int, error)
+	getRulesetVersion() uint64
+	// Returns the primary artifact cid for consensus, all cids of all files in a map, and any potential errors
+	saveFiles(smartnode *config.SmartnodeConfig, treeResult *GenerateTreeResult, nodeTrusted bool) (cid.Cid, map[string]cid.Cid, error)
+}
+
+func NewTreeGenerator(logger *log.ColorLogger, logPrefix string, rp RewardsExecutionClient, cfg *config.RocketPoolConfig, bc beacon.Client, index uint64, startTime time.Time, endTime time.Time, snapshotEnd *SnapshotEnd, elSnapshotHeader *types.Header, intervalsPassed uint64, state *state.NetworkState) (*TreeGenerator, error) {
 	t := &TreeGenerator{
 		logger:           logger,
 		logPrefix:        logPrefix,
@@ -79,85 +124,55 @@ func NewTreeGenerator(logger *log.ColorLogger, logPrefix string, rp *rocketpool.
 		index:            index,
 		startTime:        startTime,
 		endTime:          endTime,
-		consensusBlock:   consensusBlock,
+		snapshotEnd:      snapshotEnd,
 		elSnapshotHeader: elSnapshotHeader,
 		intervalsPassed:  intervalsPassed,
 	}
 
-	// v8
-	var v8_generator treeGeneratorImpl
-	if rollingRecord == nil {
-		v8_generator = newTreeGeneratorImpl_v8(t.logger, t.logPrefix, t.index, t.startTime, t.endTime, t.consensusBlock, t.elSnapshotHeader, t.intervalsPassed, state)
-	} else {
-		v8_generator = newTreeGeneratorImpl_v8_rolling(t.logger, t.logPrefix, t.index, t.startTime, t.endTime, t.consensusBlock, t.elSnapshotHeader, t.intervalsPassed, state, rollingRecord)
+	// Get the current network
+	network := t.cfg.Smartnode.Network.Value.(cfgtypes.Network)
+
+	// Determine if the interval is eligible for consensus bonuses
+	var isEligibleInterval bool
+	switch network {
+	case cfgtypes.Network_Mainnet:
+		isEligibleInterval = t.index-4 < MainnetV11Interval
+	case cfgtypes.Network_Testnet:
+		isEligibleInterval = t.index-4 < TestnetV11Interval
+	default:
+		isEligibleInterval = true
 	}
 
-	// v7
-	var v7_generator treeGeneratorImpl
-	if rollingRecord == nil {
-		v7_generator = newTreeGeneratorImpl_v7(t.logger, t.logPrefix, t.index, t.startTime, t.endTime, t.consensusBlock, t.elSnapshotHeader, t.intervalsPassed, state)
-	} else {
-		v7_generator = newTreeGeneratorImpl_v7_rolling(t.logger, t.logPrefix, t.index, t.startTime, t.endTime, t.consensusBlock, t.elSnapshotHeader, t.intervalsPassed, state, rollingRecord)
-	}
+	// v11
+	v11_generator := newTreeGeneratorImpl_v11(t.logger, t.logPrefix, t.index, t.snapshotEnd, t.elSnapshotHeader, t.intervalsPassed, state, isEligibleInterval)
 
-	// v6
-	var v6_generator treeGeneratorImpl
-	if rollingRecord == nil {
-		v6_generator = newTreeGeneratorImpl_v6(t.logger, t.logPrefix, t.index, t.startTime, t.endTime, t.consensusBlock, t.elSnapshotHeader, t.intervalsPassed, state)
-	} else {
-		v6_generator = newTreeGeneratorImpl_v6_rolling(t.logger, t.logPrefix, t.index, t.startTime, t.endTime, t.consensusBlock, t.elSnapshotHeader, t.intervalsPassed, state, rollingRecord)
-	}
+	// v10
+	v10_generator := newTreeGeneratorImpl_v9_v10(10, t.logger, t.logPrefix, t.index, t.snapshotEnd, t.elSnapshotHeader, t.intervalsPassed, state)
+
+	// v9
+	v9_generator := newTreeGeneratorImpl_v9_v10(9, t.logger, t.logPrefix, t.index, t.snapshotEnd, t.elSnapshotHeader, t.intervalsPassed, state)
 
 	// Create the interval wrappers
 	rewardsIntervalInfos := []rewardsIntervalInfo{
 		{
-			rewardsRulesetVersion: 8,
-			mainnetStartInterval:  MainnetV8Interval,
-			holeskyStartInterval:  HoleskyV8Interval,
-			generator:             v8_generator,
+			rewardsRulesetVersion: 11,
+			mainnetStartInterval:  MainnetV11Interval,
+			testnetStartInterval:  TestnetV11Interval,
+			devnetStartInterval:   DevnetV11Interval,
+			generator:             v11_generator,
 		},
 		{
-			rewardsRulesetVersion: 7,
-			mainnetStartInterval:  MainnetV7Interval,
-			devnetStartInterval:   DevnetV7Interval,
-			holeskyStartInterval:  HoleskyV7Interval,
-			generator:             v7_generator,
-		}, {
-			rewardsRulesetVersion: 6,
-			mainnetStartInterval:  MainnetV6Interval,
-			devnetStartInterval:   DevnetV6Interval,
-			holeskyStartInterval:  HoleskyV6Interval,
-			generator:             v6_generator,
-		}, {
-			rewardsRulesetVersion: 5,
-			mainnetStartInterval:  MainnetV5Interval,
-			devnetStartInterval:   DevnetV5Interval,
-			holeskyStartInterval:  HoleskyV5Interval,
-			generator:             newTreeGeneratorImpl_v5(t.logger, t.logPrefix, t.index, t.startTime, t.endTime, t.consensusBlock, t.elSnapshotHeader, t.intervalsPassed, state),
-		}, {
-			rewardsRulesetVersion: 4,
-			mainnetStartInterval:  MainnetV4Interval,
-			devnetStartInterval:   DevnetV4Interval,
-			holeskyStartInterval:  HoleskyV4Interval,
-			generator:             newTreeGeneratorImpl_v4(t.logger, t.logPrefix, t.index, t.startTime, t.endTime, t.consensusBlock, t.elSnapshotHeader, t.intervalsPassed),
-		}, {
-			rewardsRulesetVersion: 3,
-			mainnetStartInterval:  MainnetV3Interval,
-			devnetStartInterval:   DevnetV3Interval,
-			holeskyStartInterval:  HoleskyV3Interval,
-			generator:             newTreeGeneratorImpl_v3(t.logger, t.logPrefix, t.index, t.startTime, t.endTime, t.consensusBlock, t.elSnapshotHeader, t.intervalsPassed),
-		}, {
-			rewardsRulesetVersion: 2,
-			mainnetStartInterval:  MainnetV2Interval,
-			devnetStartInterval:   DevnetV2Interval,
-			holeskyStartInterval:  HoleskyV2Interval,
-			generator:             newTreeGeneratorImpl_v2(t.logger, t.logPrefix, t.index, t.startTime, t.endTime, t.consensusBlock, t.elSnapshotHeader, t.intervalsPassed),
-		}, {
-			rewardsRulesetVersion: 1,
-			mainnetStartInterval:  0,
+			rewardsRulesetVersion: 10,
+			mainnetStartInterval:  MainnetV10Interval,
+			testnetStartInterval:  TestnetV10Interval,
 			devnetStartInterval:   0,
-			holeskyStartInterval:  0,
-			generator:             newTreeGeneratorImpl_v1(t.logger, t.logPrefix, t.index, t.startTime, t.endTime, t.consensusBlock, t.elSnapshotHeader, t.intervalsPassed),
+			generator:             v10_generator,
+		},
+		{
+			rewardsRulesetVersion: 9,
+			mainnetStartInterval:  MainnetV9Interval,
+			testnetStartInterval:  0,
+			generator:             v9_generator,
 		},
 	}
 
@@ -173,24 +188,29 @@ func NewTreeGenerator(logger *log.ColorLogger, logPrefix string, rp *rocketpool.
 		t.rewardsIntervalInfos[info.rewardsRulesetVersion] = info
 	}
 
-	// Get the current network
-	network := t.cfg.Smartnode.Network.Value.(cfgtypes.Network)
-
-	// Determine which actual rulesets to use based on the current interval number, checking in descending order from the latest
-	// to interval 2 since interval 1 is the default
+	// Determine which actual rulesets to use based on the current interval number, checking in descending order.
 	foundGenerator := false
 	foundApproximator := false
-	for i := uint64(len(t.rewardsIntervalInfos)); i > 1; i-- {
-		info := t.rewardsIntervalInfos[i]
+
+	// Sort by version number, reversed. That way we will pick the highest version number whose startInterval
+	// is eligible
+	slices.SortFunc(rewardsIntervalInfos, func(a, b rewardsIntervalInfo) int {
+		// b - a sorts high to low
+		return int(b.rewardsRulesetVersion) - int(a.rewardsRulesetVersion)
+	})
+
+	// The first ruleset whose startInterval is at most t.index is the one to use, but if it requires Saturn and saturn is not yet deployed, use the next one that doesn't require Saturn
+	for _, info := range rewardsIntervalInfos {
+
 		startInterval, err := info.GetStartInterval(network)
 		if err != nil {
-			return nil, fmt.Errorf("error getting start interval for rewards period %d: %w", i, err)
+			return nil, fmt.Errorf("error getting start interval for rewards period %d: %w", t.index, err)
 		}
-		if !foundGenerator && t.index >= startInterval {
+		if !foundGenerator && startInterval <= t.index {
 			t.generatorImpl = info.generator
 			foundGenerator = true
 		}
-		if !foundApproximator && t.index > startInterval {
+		if !foundApproximator && startInterval <= t.index {
 			t.approximatorImpl = info.generator
 			foundApproximator = true
 		}
@@ -200,23 +220,27 @@ func NewTreeGenerator(logger *log.ColorLogger, logPrefix string, rp *rocketpool.
 		}
 	}
 
-	// Default to interval 1 if nothing could be found
-	if !foundGenerator {
-		t.generatorImpl = t.rewardsIntervalInfos[1].generator
-	}
-	if !foundApproximator {
-		t.approximatorImpl = t.rewardsIntervalInfos[1].generator
+	if !foundGenerator || !foundApproximator {
+		// Do not default- require intervals to be explicit
+		return nil, fmt.Errorf("No treegen implementation could be found for interval %d", t.index)
 	}
 
 	return t, nil
 }
 
-func (t *TreeGenerator) GenerateTree() (IRewardsFile, error) {
-	return t.generatorImpl.generateTree(t.rp, t.cfg, t.bc)
+type GenerateTreeResult struct {
+	RulesetVersion          uint64
+	RewardsFile             IRewardsFile
+	MinipoolPerformanceFile IPerformanceFile
+	InvalidNetworkNodes     map[common.Address]uint64
+}
+
+func (t *TreeGenerator) GenerateTree() (*GenerateTreeResult, error) {
+	return t.generatorImpl.generateTree(t.rp, fmt.Sprint(t.cfg.Smartnode.Network.Value), t.cfg.Smartnode.GetPreviousRewardsPoolAddresses(), t.bc)
 }
 
 func (t *TreeGenerator) ApproximateStakerShareOfSmoothingPool() (*big.Int, error) {
-	return t.approximatorImpl.approximateStakerShareOfSmoothingPool(t.rp, t.cfg, t.bc)
+	return t.approximatorImpl.approximateStakerShareOfSmoothingPool(t.rp, fmt.Sprint(t.cfg.Smartnode.Network.Value), t.cfg.Smartnode.GetPreviousRewardsPoolAddresses(), t.bc)
 }
 
 func (t *TreeGenerator) GetGeneratorRulesetVersion() uint64 {
@@ -227,13 +251,18 @@ func (t *TreeGenerator) GetApproximatorRulesetVersion() uint64 {
 	return t.approximatorImpl.getRulesetVersion()
 }
 
-func (t *TreeGenerator) GenerateTreeWithRuleset(ruleset uint64) (IRewardsFile, error) {
+func (t *TreeGenerator) GenerateTreeWithRuleset(ruleset uint64) (*GenerateTreeResult, error) {
 	info, exists := t.rewardsIntervalInfos[ruleset]
 	if !exists {
 		return nil, fmt.Errorf("ruleset v%d does not exist", ruleset)
 	}
 
-	return info.generator.generateTree(t.rp, t.cfg, t.bc)
+	return info.generator.generateTree(
+		t.rp,
+		fmt.Sprint(t.cfg.Smartnode.Network.Value),
+		t.cfg.Smartnode.GetPreviousRewardsPoolAddresses(),
+		t.bc,
+	)
 }
 
 func (t *TreeGenerator) ApproximateStakerShareOfSmoothingPoolWithRuleset(ruleset uint64) (*big.Int, error) {
@@ -242,5 +271,9 @@ func (t *TreeGenerator) ApproximateStakerShareOfSmoothingPoolWithRuleset(ruleset
 		return nil, fmt.Errorf("ruleset v%d does not exist", ruleset)
 	}
 
-	return info.generator.approximateStakerShareOfSmoothingPool(t.rp, t.cfg, t.bc)
+	return info.generator.approximateStakerShareOfSmoothingPool(t.rp, fmt.Sprint(t.cfg.Smartnode.Network.Value), t.cfg.Smartnode.GetPreviousRewardsPoolAddresses(), t.bc)
+}
+
+func (t *TreeGenerator) SaveFiles(treeResult *GenerateTreeResult, nodeTrusted bool) (cid.Cid, map[string]cid.Cid, error) {
+	return t.generatorImpl.saveFiles(t.cfg.Smartnode, treeResult, nodeTrusted)
 }

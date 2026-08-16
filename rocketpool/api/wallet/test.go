@@ -4,24 +4,27 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
 
 	"github.com/rocket-pool/smartnode/shared/services"
+	"github.com/rocket-pool/smartnode/shared/services/beacon"
 	"github.com/rocket-pool/smartnode/shared/services/wallet"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	walletutils "github.com/rocket-pool/smartnode/shared/utils/wallet"
 )
 
-func testRecoverWallet(c *cli.Context, mnemonic string) (*api.RecoverWalletResponse, error) {
+func testRecoverWalletWithParams(c *cli.Command, mnemonic string, skipValidatorKeyRecovery bool, derivationPath string, walletIndex uint) (*api.RecoverWalletResponse, error) {
 
 	// Get services
 	cfg, err := services.GetConfig(c)
 	if err != nil {
 		return nil, err
 	}
+	// Chain clients are only needed to discover and filter validator pubkeys
 	var rp *rocketpool.RocketPool
-	if !c.Bool("skip-validator-key-recovery") {
+	var bc beacon.Client
+	if !skipValidatorKeyRecovery {
 		if err := services.RequireRocketStorage(c); err != nil {
 			return nil, err
 		}
@@ -29,11 +32,15 @@ func testRecoverWallet(c *cli.Context, mnemonic string) (*api.RecoverWalletRespo
 		if err != nil {
 			return nil, err
 		}
+		bc, err = services.GetBeaconClient(c)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Create a blank wallet
 	chainId := cfg.Smartnode.GetChainID()
-	w, err := wallet.NewWallet("", chainId, nil, nil, 0, nil)
+	w, err := wallet.NewWallet("", "", chainId, nil, nil, 0, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +49,7 @@ func testRecoverWallet(c *cli.Context, mnemonic string) (*api.RecoverWalletRespo
 	response := api.RecoverWalletResponse{}
 
 	// Get the derivation path
-	path := c.String("derivation-path")
+	path := derivationPath
 	switch path {
 	case "":
 		path = wallet.DefaultNodeKeyPath
@@ -51,9 +58,6 @@ func testRecoverWallet(c *cli.Context, mnemonic string) (*api.RecoverWalletRespo
 	case "mew":
 		path = wallet.MyEtherWalletNodeKeyPath
 	}
-
-	// Get the wallet index
-	walletIndex := c.Uint("wallet-index")
 
 	// Recover wallet
 	if err := w.TestRecovery(path, walletIndex, mnemonic); err != nil {
@@ -67,8 +71,8 @@ func testRecoverWallet(c *cli.Context, mnemonic string) (*api.RecoverWalletRespo
 	}
 	response.AccountAddress = nodeAccount.Address
 
-	if !c.Bool("skip-validator-key-recovery") {
-		response.ValidatorKeys, err = walletutils.RecoverMinipoolKeys(c, rp, nodeAccount.Address, w, true)
+	if !skipValidatorKeyRecovery {
+		response.ValidatorKeys, err = recoverNodeKeys(c, rp, bc, nodeAccount.Address, w, true)
 		if err != nil {
 			return nil, err
 		}
@@ -79,15 +83,17 @@ func testRecoverWallet(c *cli.Context, mnemonic string) (*api.RecoverWalletRespo
 
 }
 
-func testSearchAndRecoverWallet(c *cli.Context, mnemonic string, address common.Address) (*api.SearchAndRecoverWalletResponse, error) {
+func testSearchAndRecoverWalletWithParams(c *cli.Command, mnemonic string, address common.Address, skipValidatorKeyRecovery bool) (*api.SearchAndRecoverWalletResponse, error) {
 
 	// Get services
 	cfg, err := services.GetConfig(c)
 	if err != nil {
 		return nil, err
 	}
+	// Chain clients are only needed to discover and filter validator pubkeys
 	var rp *rocketpool.RocketPool
-	if !c.Bool("skip-validator-key-recovery") {
+	var bc beacon.Client
+	if !skipValidatorKeyRecovery {
 		if err := services.RequireRocketStorage(c); err != nil {
 			return nil, err
 		}
@@ -95,11 +101,15 @@ func testSearchAndRecoverWallet(c *cli.Context, mnemonic string, address common.
 		if err != nil {
 			return nil, err
 		}
+		bc, err = services.GetBeaconClient(c)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Create a blank wallet
 	chainId := cfg.Smartnode.GetChainID()
-	w, err := wallet.NewWallet("", chainId, nil, nil, 0, nil)
+	w, err := wallet.NewWallet("", "", chainId, nil, nil, 0, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +126,7 @@ func testSearchAndRecoverWallet(c *cli.Context, mnemonic string, address common.
 	for i := uint(0); i < findIterations; i++ {
 		for j := 0; j < len(paths); j++ {
 			derivationPath := paths[j]
-			recoveredWallet, err := wallet.NewWallet("", uint(w.GetChainID().Uint64()), nil, nil, 0, nil)
+			recoveredWallet, err := wallet.NewWallet("", "", uint(w.GetChainID().Uint64()), nil, nil, 0, nil, nil)
 			if err != nil {
 				return nil, fmt.Errorf("error generating new wallet: %w", err)
 			}
@@ -159,8 +169,8 @@ func testSearchAndRecoverWallet(c *cli.Context, mnemonic string, address common.
 	}
 	response.AccountAddress = nodeAccount.Address
 
-	if !c.Bool("skip-validator-key-recovery") {
-		response.ValidatorKeys, err = walletutils.RecoverMinipoolKeys(c, rp, nodeAccount.Address, w, true)
+	if !skipValidatorKeyRecovery {
+		response.ValidatorKeys, err = recoverNodeKeys(c, rp, bc, nodeAccount.Address, w, true)
 		if err != nil {
 			return nil, err
 		}

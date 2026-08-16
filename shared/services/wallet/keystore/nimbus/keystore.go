@@ -7,13 +7,14 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/google/uuid"
-	"github.com/rocket-pool/rocketpool-go/types"
 	eth2types "github.com/wealdtech/go-eth2-types/v2"
 	eth2ks "github.com/wealdtech/go-eth2-wallet-encryptor-keystorev4"
 
+	"github.com/rocket-pool/smartnode/bindings/types"
+
+	hexutil "github.com/rocket-pool/smartnode/shared/hex"
 	"github.com/rocket-pool/smartnode/shared/services/passwords"
 	keystore "github.com/rocket-pool/smartnode/shared/services/wallet/keystore"
-	hexutil "github.com/rocket-pool/smartnode/shared/utils/hex"
 )
 
 // Config

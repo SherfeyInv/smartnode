@@ -4,16 +4,17 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
+
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
-	"github.com/urfave/cli"
 )
 
-func setSignallingAddress(c *cli.Context, signallingAddress common.Address, signature string) error {
+func setSignallingAddress(signallingAddress common.Address, signature string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -31,13 +32,13 @@ func setSignallingAddress(c *cli.Context, signallingAddress common.Address, sign
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(resp.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(resp.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to set the signalling address?")) {
+	if prompt.Declined(yes, "Are you sure you want to set the signalling address?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -59,10 +60,10 @@ func setSignallingAddress(c *cli.Context, signallingAddress common.Address, sign
 	return nil
 }
 
-func clearSignallingAddress(c *cli.Context) error {
+func clearSignallingAddress(yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -80,13 +81,13 @@ func clearSignallingAddress(c *cli.Context) error {
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(resp.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(resp.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to clear the signalling address?")) {
+	if prompt.Declined(yes, "Are you sure you want to clear the signalling address?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -104,7 +105,7 @@ func clearSignallingAddress(c *cli.Context) error {
 	}
 
 	// Log & return
-	fmt.Println("The node's signalling address was sucessfully cleared.")
+	fmt.Println("The node's signalling address was successfully cleared.")
 	return nil
 
 }

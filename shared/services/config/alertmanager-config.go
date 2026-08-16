@@ -24,6 +24,7 @@ const AlertingRulesConfigFile string = "alerting/rules/default.yml"
 const defaultAlertmanagerPort uint16 = 9093
 const defaultAlertmanagerHost string = "localhost"
 const defaultAlertmanagerOpenPort config.RPCMode = config.RPC_Closed
+const defaultLowETHBalanceThreshold float64 = 0.01
 
 // Configuration for Alertmanager
 type AlertmanagerConfig struct {
@@ -35,6 +36,9 @@ type AlertmanagerConfig struct {
 
 	// Whether alerting is enabled
 	EnableAlerting config.Parameter `yaml:"enableAlerting,omitempty"`
+
+	// Whether to show active alerts at the end of every CLI command
+	ShowAlertsOnCLI config.Parameter `yaml:"showAlertsOnCLI,omitempty"`
 
 	// Port for alertmanager UI & API
 	Port config.Parameter `yaml:"port,omitempty"`
@@ -53,9 +57,14 @@ type AlertmanagerConfig struct {
 	// The Discord webhook URL for alert notifications
 	DiscordWebhookURL config.Parameter `yaml:"discordWebhookURL,omitempty"`
 
+	// The Pushover Token for alert notifications
+	PushoverToken config.Parameter `yaml:"pushoverToken,omitempty"`
+	// The Pushover User Key for alert notifications
+	PushoverUserKey config.Parameter `yaml:"pushoverUserKey,omitempty"`
+
 	// Alerts configured in prometheus rule configuration file:
 	AlertEnabled_ClientSyncStatusBeacon    config.Parameter `yaml:"alertEnabled_ClientSyncStatusBeacon,omitempty"`
-	AlertEnabled_ClientSyncStatusExecution config.Parameter `yaml:"alertEnabled_ClientSyncStatusBeacon,omitempty"`
+	AlertEnabled_ClientSyncStatusExecution config.Parameter `yaml:"alertEnabled_ClientSyncStatusExecution,omitempty"`
 	AlertEnabled_UpcomingSyncCommittee     config.Parameter `yaml:"alertEnabled_UpcomingSyncCommittee,omitempty"`
 	AlertEnabled_ActiveSyncCommittee       config.Parameter `yaml:"alertEnabled_ActiveSyncCommittee,omitempty"`
 	AlertEnabled_UpcomingProposal          config.Parameter `yaml:"alertEnabled_UpcomingProposal,omitempty"`
@@ -64,6 +73,8 @@ type AlertmanagerConfig struct {
 	AlertEnabled_LowDiskSpaceCritical      config.Parameter `yaml:"alertEnabled_LowDiskSpaceCritical,omitempty"`
 	AlertEnabled_OSUpdatesAvailable        config.Parameter `yaml:"alertEnabled_OSUpdatesAvailable,omitempty"`
 	AlertEnabled_RPUpdatesAvailable        config.Parameter `yaml:"alertEnabled_RPUpdatesAvailable,omitempty"`
+	AlertEnabled_LowETHBalance             config.Parameter `yaml:"alertEnabled_LowETHBalance,omitempty"`
+	LowETHBalanceThreshold                 config.Parameter `yaml:"lowETHBalanceThreshold,omitempty"`
 	// Alerts manually sent in alerting.go:
 	AlertEnabled_FeeRecipientChanged         config.Parameter `yaml:"alertEnabled_FeeRecipientChanged,omitempty"`
 	AlertEnabled_MinipoolBondReduced         config.Parameter `yaml:"alertEnabled_MinipoolBondReduced,omitempty"`
@@ -72,6 +83,10 @@ type AlertmanagerConfig struct {
 	AlertEnabled_MinipoolStaked              config.Parameter `yaml:"alertEnabled_MinipoolStaked,omitempty"`
 	AlertEnabled_ExecutionClientSyncComplete config.Parameter `yaml:"alertEnabled_ExecutionClientSyncComplete,omitempty"`
 	AlertEnabled_BeaconClientSyncComplete    config.Parameter `yaml:"alertEnabled_BeaconClientSyncComplete,omitempty"`
+	// Whether to periodically check if the eth1 and eth2 P2P ports are open to the internet
+	AlertEnabled_PortConnectivityCheck config.Parameter `yaml:"alertEnabled_PortConnectivityCheck,omitempty"`
+	// Whether to alert while the node/watchtower daemon is running in observe (masquerade) mode
+	AlertEnabled_ObserveModeActive config.Parameter `yaml:"alertEnabled_ObserveModeActive,omitempty"`
 }
 
 func NewAlertmanagerConfig(cfg *RocketPoolConfig) *AlertmanagerConfig {
@@ -84,10 +99,21 @@ func NewAlertmanagerConfig(cfg *RocketPoolConfig) *AlertmanagerConfig {
 		EnableAlerting: config.Parameter{
 			ID:                 "enableAlerting",
 			Name:               "Enable Alerting",
-			Description:        "Enable the Smartnode's alerting system. This will provide you alerts when important events occur with your node.",
+			Description:        "Enable the Smart Node's alerting system. This will provide you alerts when important events occur with your node.",
 			Type:               config.ParameterType_Bool,
 			Default:            map[config.Network]interface{}{config.Network_All: true},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Prometheus, config.ContainerID_Alertmanager},
+			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
+		},
+
+		ShowAlertsOnCLI: config.Parameter{
+			ID:                 "showAlertsOnCLI",
+			Name:               "Show Alerts After Every Command",
+			Description:        "When enabled, any active alerts will be printed at the end of every CLI command output.",
+			Type:               config.ParameterType_Bool,
+			Default:            map[config.Network]interface{}{config.Network_All: true},
+			AffectsContainers:  []config.ContainerID{},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
@@ -152,6 +178,28 @@ func NewAlertmanagerConfig(cfg *RocketPoolConfig) *AlertmanagerConfig {
 			ID:                 "discordWebhookURL",
 			Name:               "Alertmanager Discord Webhook URL",
 			Description:        "Discord notifications are sent via the Discord webhook API. See Discord's 'Intro to Webhooks' article to learn how to configure a webhook integration for a channel at https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks",
+			Type:               config.ParameterType_String,
+			Default:            map[config.Network]interface{}{config.Network_All: ""},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Alertmanager},
+			CanBeBlank:         true,
+			OverwriteOnUpgrade: false,
+		},
+
+		PushoverToken: config.Parameter{
+			ID:                 "pushoverToken",
+			Name:               "Alertmanager Pushover Token",
+			Description:        "Pushover notifications are sent via the Pushover API. See docs for detailed technical explanation or a tl;dr on how to configure at https://pushover.net/api",
+			Type:               config.ParameterType_String,
+			Default:            map[config.Network]interface{}{config.Network_All: ""},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Alertmanager},
+			CanBeBlank:         true,
+			OverwriteOnUpgrade: false,
+		},
+
+		PushoverUserKey: config.Parameter{
+			ID:                 "pushoverUserKey",
+			Name:               "Alertmanager Pushover User Key",
+			Description:        "Pushover notifications are sent via the Pushover API. See docs for detailed technical explanation or a tl;dr on how to configure at https://pushover.net/api",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Alertmanager},
@@ -226,6 +274,34 @@ func NewAlertmanagerConfig(cfg *RocketPoolConfig) *AlertmanagerConfig {
 		AlertEnabled_BeaconClientSyncComplete: createParameterForAlertEnablement(
 			"BeaconClientSyncComplete",
 			"beacon client is synced"),
+		AlertEnabled_PortConnectivityCheck: config.Parameter{
+			ID:                 "alertEnabled_PortConnectivityCheck",
+			Name:               "Enable Port Connectivity Check",
+			Description:        "Periodically check whether the execution/consensus client P2P ports (default 30303 and 9001) are reachable from the internet, and send an alert if either port is not accessible.",
+			Type:               config.ParameterType_Bool,
+			Default:            map[config.Network]interface{}{config.Network_All: true},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node},
+			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
+		},
+		AlertEnabled_LowETHBalance: createParameterForAlertEnablement(
+			"LowETHBalance",
+			"Low ETH Balance"),
+
+		AlertEnabled_ObserveModeActive: createParameterForAlertEnablement(
+			"ObserveModeActive",
+			"the node/watchtower daemon is running in observe mode"),
+
+		LowETHBalanceThreshold: config.Parameter{
+			ID:                 "lowETHBalanceThreshold",
+			Name:               "Low ETH Balance Threshold",
+			Description:        "The threshold for the low ETH balance alert.",
+			Type:               config.ParameterType_Float,
+			Default:            map[config.Network]interface{}{config.Network_All: defaultLowETHBalanceThreshold},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Prometheus},
+			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
+		},
 	}
 }
 
@@ -246,11 +322,14 @@ func createParameterForAlertEnablement(uniqueName string, label string) config.P
 func (cfg *AlertmanagerConfig) GetParameters() []*config.Parameter {
 	return []*config.Parameter{
 		&cfg.EnableAlerting,
+		&cfg.ShowAlertsOnCLI,
 		&cfg.Port,
 		&cfg.OpenPort,
 		&cfg.NativeModeHost,
 		&cfg.NativeModePort,
 		&cfg.DiscordWebhookURL,
+		&cfg.PushoverToken,
+		&cfg.PushoverUserKey,
 		&cfg.ContainerTag,
 		&cfg.AlertEnabled_ClientSyncStatusBeacon,
 		&cfg.AlertEnabled_ClientSyncStatusExecution,
@@ -269,6 +348,10 @@ func (cfg *AlertmanagerConfig) GetParameters() []*config.Parameter {
 		&cfg.AlertEnabled_MinipoolStaked,
 		&cfg.AlertEnabled_ExecutionClientSyncComplete,
 		&cfg.AlertEnabled_BeaconClientSyncComplete,
+		&cfg.AlertEnabled_PortConnectivityCheck,
+		&cfg.AlertEnabled_LowETHBalance,
+		&cfg.AlertEnabled_ObserveModeActive,
+		&cfg.LowETHBalanceThreshold,
 	}
 }
 
@@ -296,6 +379,7 @@ func (cfg *AlertmanagerConfig) UpdateConfigurationFiles(configPath string) error
 	if err != nil {
 		return fmt.Errorf("error processing alerting rules template: %w", err)
 	}
+
 	return nil
 }
 

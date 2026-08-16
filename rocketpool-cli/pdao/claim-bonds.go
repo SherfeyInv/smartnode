@@ -5,20 +5,20 @@ import (
 	"sort"
 	"strconv"
 
-	rocketpoolapi "github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
-	"github.com/urfave/cli"
+	"github.com/rocket-pool/smartnode/bindings/transactions/gaslimit"
 
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
 )
 
-func claimBonds(c *cli.Context) error {
+func claimBonds(proposal string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -39,17 +39,17 @@ func claimBonds(c *cli.Context) error {
 
 	// Get selected proposal
 	var selectedClaims []api.BondClaimResult
-	if c.String("proposal") == "all" {
+	if proposal == "all" {
 
 		// Select all proposals
 		selectedClaims = claimableBonds
 
-	} else if c.String("proposal") != "" {
+	} else if proposal != "" {
 
 		// Get selected proposal ID
-		selectedId, err := strconv.ParseUint(c.String("proposal"), 10, 64)
+		selectedId, err := strconv.ParseUint(proposal, 10, 64)
 		if err != nil {
-			return fmt.Errorf("Invalid proposal ID '%s': %w", c.String("proposal"), err)
+			return fmt.Errorf("Invalid proposal ID '%s': %w", proposal, err)
 		}
 
 		// Get matching proposal
@@ -71,9 +71,9 @@ func claimBonds(c *cli.Context) error {
 		options := make([]string, len(claimableBonds)+1)
 		options[0] = "All available proposals"
 		for pi, bond := range claimableBonds {
-			options[pi+1] = fmt.Sprintf("Proposal %d (proposer: %t, unlockable: %.2f RPL, rewards: %.2f RPL)", bond.ProposalID, bond.IsProposer, eth.WeiToEth(bond.UnlockAmount), eth.WeiToEth(bond.RewardAmount))
+			options[pi+1] = fmt.Sprintf("Proposal %d (proposer: %t, unlockable: %.2f RPL, rewards: %.2f RPL)", bond.ProposalID, bond.IsProposer, math.WeiToEth(bond.UnlockAmount), math.WeiToEth(bond.RewardAmount))
 		}
-		selected, _ := cliutils.Select("Please select a proposal to unlock bonds / claim rewards from:", options)
+		selected, _ := prompt.Select("Please select a proposal to unlock bonds / claim rewards from:", options)
 
 		// Get proposals
 		if selected == 0 {
@@ -85,31 +85,24 @@ func claimBonds(c *cli.Context) error {
 	}
 
 	// Get the total gas limit estimate
-	var totalGas uint64 = 0
-	var totalSafeGas uint64 = 0
-	var gasInfo rocketpoolapi.GasInfo
+	var gasLimits gaslimit.Limits
 	for _, bond := range selectedClaims {
 		indices := getClaimIndicesForBond(bond)
 		canResponse, err := rp.PDAOCanClaimBonds(bond.ProposalID, indices)
 		if err != nil {
 			return fmt.Errorf("error simulating claim-bond on proposal %d: %s", bond.ProposalID, err.Error())
-		} else {
-			gasInfo = canResponse.GasInfo
-			totalGas += canResponse.GasInfo.EstGasLimit
-			totalSafeGas += canResponse.GasInfo.SafeGasLimit
 		}
+		gasLimits = gasLimits.Add(canResponse.GasLimits)
 	}
-	gasInfo.EstGasLimit = totalGas
-	gasInfo.SafeGasLimit = totalSafeGas
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(gasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(gasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm(fmt.Sprintf("Are you sure you want to claim bonds and rewards from %d proposals?", len(selectedClaims)))) {
+	if prompt.Declined(yes, "Are you sure you want to claim bonds and rewards from %d proposals?", len(selectedClaims)) {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -147,7 +140,7 @@ func getClaimIndicesForBond(bond api.BondClaimResult) []uint64 {
 	}
 
 	indices := make([]uint64, 0, len(indexMap))
-	for index, _ := range indexMap {
+	for index := range indexMap {
 		indices = append(indices, index)
 	}
 

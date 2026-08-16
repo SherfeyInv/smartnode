@@ -4,17 +4,19 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/rocket-pool/rocketpool-go/dao/protocol"
-	rpnode "github.com/rocket-pool/rocketpool-go/node"
-	psettings "github.com/rocket-pool/rocketpool-go/settings/protocol"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/protocol"
+	rpnode "github.com/rocket-pool/smartnode/bindings/node"
+	psettings "github.com/rocket-pool/smartnode/bindings/settings/protocol"
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
-	"github.com/urfave/cli"
 )
 
-func getRewardsPercentages(c *cli.Context) (*api.PDAOGetRewardsPercentagesResponse, error) {
+func getRewardsPercentages(c *cli.Command) (*api.PDAOGetRewardsPercentagesResponse, error) {
 	// Get services
 	if err := services.RequireEthClientSynced(c); err != nil {
 		return nil, err
@@ -40,9 +42,9 @@ func getRewardsPercentages(c *cli.Context) (*api.PDAOGetRewardsPercentagesRespon
 	return &response, nil
 }
 
-func canProposeRewardsPercentages(c *cli.Context, node *big.Int, odao *big.Int, pdao *big.Int) (*api.PDAOCanProposeRewardsPercentagesResponse, error) {
+func canProposeRewardsPercentages(c *cli.Command, node *big.Int, odao *big.Int, pdao *big.Int) (*api.PDAOCanProposeRewardsPercentagesResponse, error) {
 	// Validate sum of percentages == 100%
-	one := eth.EthToWei(1)
+	one := math.EthToWei(1)
 	sum := big.NewInt(0).Set(node)
 	sum.Add(sum, odao)
 	sum.Add(sum, pdao)
@@ -115,17 +117,17 @@ func canProposeRewardsPercentages(c *cli.Context, node *big.Int, odao *big.Int, 
 	response.BlockNumber = blockNumber
 
 	// Simulate
-	gasInfo, err := protocol.EstimateProposeSetRewardsPercentageGas(rp, "update RPL rewards distribution", odao, pdao, node, blockNumber, pollard, opts)
+	gasLimits, err := protocol.EstimateProposeSetRewardsPercentageGas(rp, "update RPL rewards distribution", odao, pdao, node, blockNumber, pollard, opts)
 	if err != nil {
 		return nil, err
 	}
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 
 	// Return response
 	return &response, nil
 }
 
-func proposeRewardsPercentages(c *cli.Context, node *big.Int, odao *big.Int, pdao *big.Int, blockNumber uint32) (*api.PDAOProposeRewardsPercentagesResponse, error) {
+func proposeRewardsPercentages(c *cli.Command, node *big.Int, odao *big.Int, pdao *big.Int, blockNumber uint32, opts *bind.TransactOpts) (*api.PDAOProposeRewardsPercentagesResponse, error) {
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
 		return nil, err
@@ -134,10 +136,6 @@ func proposeRewardsPercentages(c *cli.Context, node *big.Int, odao *big.Int, pda
 		return nil, err
 	}
 	cfg, err := services.GetConfig(c)
-	if err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
 	if err != nil {
 		return nil, err
 	}
@@ -154,21 +152,10 @@ func proposeRewardsPercentages(c *cli.Context, node *big.Int, odao *big.Int, pda
 	response := api.PDAOProposeRewardsPercentagesResponse{}
 
 	// Get the account transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
 	// Decode the pollard
 	pollard, err := getPollard(rp, cfg, bc, blockNumber)
 	if err != nil {
 		return nil, fmt.Errorf("error regenerating pollard: %w", err)
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
 	}
 
 	// Submit the proposal

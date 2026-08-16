@@ -7,19 +7,18 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/network"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
+
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/rocketpool/eip712"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/services/contracts"
 	"github.com/rocket-pool/smartnode/shared/types/api"
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
-	apiutils "github.com/rocket-pool/smartnode/shared/utils/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 )
 
-func canSetSignallingAddress(c *cli.Context, signallingAddress common.Address, signature string) (*api.PDAOCanSetSignallingAddressResponse, error) {
+func canSetSignallingAddress(c *cli.Command, signallingAddress common.Address, signature string) (*api.PDAOCanSetSignallingAddressResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -34,10 +33,6 @@ func canSetSignallingAddress(c *cli.Context, signallingAddress common.Address, s
 		return nil, err
 	}
 	ec, err := services.GetEthClient(c)
-	if err != nil {
-		return nil, err
-	}
-	rp, err := services.GetRocketPool(c)
 	if err != nil {
 		return nil, err
 	}
@@ -56,11 +51,6 @@ func canSetSignallingAddress(c *cli.Context, signallingAddress common.Address, s
 
 	// Response
 	response := api.PDAOCanSetSignallingAddressResponse{}
-
-	response.VotingInitialized, err = network.GetVotingInitialized(rp, nodeAccount.Address, nil)
-	if !response.VotingInitialized {
-		return nil, fmt.Errorf("Voting must be initialized to set a signalling address. Use 'rocketpool pdao initialize-voting' to initialize voting first.")
-	}
 
 	// Get signer registry contract address
 	addressString := cfg.Smartnode.GetRocketSignerRegistryAddress()
@@ -101,30 +91,27 @@ func canSetSignallingAddress(c *cli.Context, signallingAddress common.Address, s
 	}
 
 	// Parse signature into vrs components, v to uint8 and v,s to [32]byte
-	sig, err := apiutils.ParseEIP712(signature)
+	sig := eip712.Components{}
+	err = sig.UnmarshalText([]byte(signature))
 	if err != nil {
 		fmt.Println("Error parsing signature", err)
 	}
 
 	// Get the gas info
-	gasInfo, err := contract.GetTransactionGasInfo(opts, "setSigner", signallingAddress, sig.V, sig.R, sig.S)
+	gasLimits, err := contract.GetTransactionGasInfo(opts, "setSigner", signallingAddress, sig.V, sig.R, sig.S)
 	if err != nil {
 		return nil, err
 	}
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 
 	// Return response
 	return &response, nil
 }
 
-func setSignallingAddress(c *cli.Context, signallingAddress common.Address, signature string) (*api.PDAOSetSignallingAddressResponse, error) {
+func setSignallingAddress(c *cli.Command, signallingAddress common.Address, signature string, opts *bind.TransactOpts) (*api.PDAOSetSignallingAddressResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	cfg, err := services.GetConfig(c)
@@ -143,21 +130,10 @@ func setSignallingAddress(c *cli.Context, signallingAddress common.Address, sign
 	response := api.PDAOSetSignallingAddressResponse{}
 
 	// Parse signature into vrs components, v to uint8 and v,s to [32]byte
-	sig, err := apiutils.ParseEIP712(signature)
+	sig := eip712.Components{}
+	err = sig.UnmarshalText([]byte(signature))
 	if err != nil {
 		fmt.Println("Error parsing signature", err)
-	}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
 	}
 
 	// Call SetSigner on RocketSignerRegistry
@@ -171,7 +147,7 @@ func setSignallingAddress(c *cli.Context, signallingAddress common.Address, sign
 	return &response, nil
 }
 
-func canClearSignallingAddress(c *cli.Context) (*api.PDAOCanClearSignallingAddressResponse, error) {
+func canClearSignallingAddress(c *cli.Command) (*api.PDAOCanClearSignallingAddressResponse, error) {
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
 		return nil, err
@@ -244,22 +220,18 @@ func canClearSignallingAddress(c *cli.Context) (*api.PDAOCanClearSignallingAddre
 	}
 
 	// Get the gas info
-	gasInfo, err := contract.GetTransactionGasInfo(opts, "clearSigner")
+	gasLimits, err := contract.GetTransactionGasInfo(opts, "clearSigner")
 	if err != nil {
 		return nil, err
 	}
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 
 	return &response, nil
 }
 
-func clearSignallingAddress(c *cli.Context) (*api.PDAOClearSignallingAddressResponse, error) {
+func clearSignallingAddress(c *cli.Command, opts *bind.TransactOpts) (*api.PDAOClearSignallingAddressResponse, error) {
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	cfg, err := services.GetConfig(c)
@@ -275,18 +247,6 @@ func clearSignallingAddress(c *cli.Context) (*api.PDAOClearSignallingAddressResp
 	}
 
 	response := api.PDAOClearSignallingAddressResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Clear the signalling address
 	tx, err := reg.ClearSigner(opts)

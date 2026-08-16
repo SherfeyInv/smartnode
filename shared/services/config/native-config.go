@@ -26,7 +26,7 @@ type NativeConfig struct {
 	ValidatorStopCommand config.Parameter `yaml:"validatorStopCommand,omitempty"`
 }
 
-// Generates a new Smartnode configuration
+// Generates a newSmart Node configuration
 func NewNativeConfig(cfg *RocketPoolConfig) *NativeConfig {
 
 	return &NativeConfig{
@@ -130,7 +130,7 @@ func getDefaultValidatorStopCommand(config *RocketPoolConfig) string {
 	return filepath.Join(config.RocketPoolDirectory, "stop-validator.sh")
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *NativeConfig) GetConfigTitle() string {
 	return cfg.Title
 }

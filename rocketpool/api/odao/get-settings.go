@@ -3,14 +3,15 @@ package odao
 import (
 	"fmt"
 
-	"github.com/rocket-pool/rocketpool-go/settings/trustednode"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/settings/trustednode"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
 )
 
-func getMemberSettings(c *cli.Context) (*api.GetTNDAOMemberSettingsResponse, error) {
+func getMemberSettings(c *cli.Command) (*api.GetTNDAOMemberSettingsResponse, error) {
 
 	// Get services
 	rp, err := services.GetRocketPool(c)
@@ -31,11 +32,6 @@ func getMemberSettings(c *cli.Context) (*api.GetTNDAOMemberSettingsResponse, err
 		return nil, fmt.Errorf("Error getting RPL Bond: %w", err)
 	}
 
-	minipoolUnbondedMax, err := trustednode.GetMinipoolUnbondedMax(rp, nil)
-	if err != nil {
-		return nil, fmt.Errorf("Error getting minipool unbonded max: %w", err)
-	}
-
 	challengeCooldown, err := trustednode.GetChallengeCooldown(rp, nil)
 	if err != nil {
 		return nil, fmt.Errorf("Error getting challenge cooldown: %w", err)
@@ -53,7 +49,6 @@ func getMemberSettings(c *cli.Context) (*api.GetTNDAOMemberSettingsResponse, err
 
 	response.Quorum = quorum
 	response.RPLBond = rplBond
-	response.MinipoolUnbondedMax = minipoolUnbondedMax
 	response.ChallengeCooldown = challengeCooldown
 	response.ChallengeWindow = challengeWindow
 	response.ChallengeCost = challengeCost
@@ -62,7 +57,7 @@ func getMemberSettings(c *cli.Context) (*api.GetTNDAOMemberSettingsResponse, err
 	return &response, nil
 }
 
-func getProposalSettings(c *cli.Context) (*api.GetTNDAOProposalSettingsResponse, error) {
+func getProposalSettings(c *cli.Command) (*api.GetTNDAOProposalSettingsResponse, error) {
 
 	// Get services
 	rp, err := services.GetRocketPool(c)
@@ -108,7 +103,7 @@ func getProposalSettings(c *cli.Context) (*api.GetTNDAOProposalSettingsResponse,
 	return &response, nil
 }
 
-func getMinipoolSettings(c *cli.Context) (*api.GetTNDAOMinipoolSettingsResponse, error) {
+func getMinipoolSettings(c *cli.Command) (*api.GetTNDAOMinipoolSettingsResponse, error) {
 
 	// Get services
 	rp, err := services.GetRocketPool(c)

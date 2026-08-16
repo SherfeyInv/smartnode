@@ -5,15 +5,16 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
-	"github.com/urfave/cli"
 )
 
-func proposeSecurityCouncilReplace(c *cli.Context) error {
+func proposeSecurityCouncilReplace(existingAddressString string, newID string, newAddressString string, yes bool) error {
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -28,18 +29,17 @@ func proposeSecurityCouncilReplace(c *cli.Context) error {
 	// Get the address of the member to replace
 	var oldID string
 	var oldAddress common.Address
-	oldAddressString := c.String("existing-address")
-	if oldAddressString == "" {
+	if existingAddressString == "" {
 		options := make([]string, len(membersResponse.Members))
 		for i, member := range membersResponse.Members {
 			options[i] = fmt.Sprintf("%d: %s (%s), joined %s\n", i+1, member.ID, member.Address, time.Unix(int64(member.JoinedTime), 0))
 		}
-		selection, _ := cliutils.Select("Which member would you like to replace?", options)
+		selection, _ := prompt.Select("Which member would you like to replace?", options)
 		member := membersResponse.Members[selection]
 		oldID = member.ID
 		oldAddress = member.Address
 	} else {
-		oldAddress, err = cliutils.ValidateAddress("address", oldAddressString)
+		oldAddress, err = cliutils.ValidateAddress("address", existingAddressString)
 		if err != nil {
 			return err
 		}
@@ -57,9 +57,8 @@ func proposeSecurityCouncilReplace(c *cli.Context) error {
 	}
 
 	// Get the new ID
-	newID := c.String("new-id")
 	if newID == "" {
-		newID = cliutils.Prompt("Please enter an ID for the member you'd like to invite: (no spaces)", "^\\S+$", "Invalid ID")
+		newID = prompt.Prompt("Please enter an ID for the member you'd like to invite: (no spaces)", "^\\S+$", "Invalid ID")
 	}
 	newID, err = cliutils.ValidateDAOMemberID("id", newID)
 	if err != nil {
@@ -67,9 +66,8 @@ func proposeSecurityCouncilReplace(c *cli.Context) error {
 	}
 
 	// Get the new address
-	newAddressString := c.String("new-address")
 	if newAddressString == "" {
-		newAddressString = cliutils.Prompt("Please enter the member's address:", "^0x[0-9a-fA-F]{40}$", "Invalid member address")
+		newAddressString = prompt.Prompt("Please enter the member's address:", "^0x[0-9a-fA-F]{40}$", "Invalid member address")
 	}
 	newAddress, err := cliutils.ValidateAddress("address", newAddressString)
 	if err != nil {
@@ -90,13 +88,13 @@ func proposeSecurityCouncilReplace(c *cli.Context) error {
 	}
 
 	// Assign max fee
-	err = gas.AssignMaxFeeAndLimit(canResponse.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canResponse.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm(fmt.Sprintf("Are you sure you want to propose removing %s (%s) from the security council and inviting %s (%s)?", oldID, oldAddress.Hex(), newID, newAddress.Hex()))) {
+	if prompt.Declined(yes, "Are you sure you want to propose removing %s (%s) from the security council and inviting %s (%s)?", oldID, oldAddress.Hex(), newID, newAddress.Hex()) {
 		fmt.Println("Cancelled.")
 		return nil
 	}

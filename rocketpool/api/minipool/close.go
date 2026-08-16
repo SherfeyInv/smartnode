@@ -7,22 +7,26 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/minipool"
-	"github.com/rocket-pool/rocketpool-go/network"
-	"github.com/rocket-pool/rocketpool-go/node"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/types"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
-	"github.com/urfave/cli"
+	gethtypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/rocket-pool/smartnode/bindings/minipool"
+	"github.com/rocket-pool/smartnode/bindings/node"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/types"
+
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/services/beacon"
+	"github.com/rocket-pool/smartnode/shared/services/flashbots"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func getMinipoolCloseDetailsForNode(c *cli.Context) (*api.GetMinipoolCloseDetailsForNodeResponse, error) {
+// Gas can't be estimated against current chain state (the fee distributor's distribute() in the bundle hasn't executed yet)
+const distributeBalanceBundleGasLimit uint64 = 600000
+
+func getMinipoolCloseDetailsForNode(c *cli.Command) (*api.GetMinipoolCloseDetailsForNodeResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
@@ -49,20 +53,18 @@ func getMinipoolCloseDetailsForNode(c *cli.Context) (*api.GetMinipoolCloseDetail
 		return nil, err
 	}
 
+	// Check if express tickets have been provisioned for the node
+	response.ExpressTicketsProvisioned, err = node.GetExpressTicketsProvisioned(rp, nodeAccount.Address, nil)
+	if err != nil {
+		return nil, fmt.Errorf("error checking if the node's express tickets are provisioned: %w", err)
+	}
+
 	// Check the fee distributor
 	response.IsFeeDistributorInitialized, err = node.GetFeeDistributorInitialized(rp, nodeAccount.Address, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error checking if the node's fee distributor is initialized: %w", err)
 	}
 	if !response.IsFeeDistributorInitialized {
-		return &response, nil
-	}
-
-	response.IsVotingInitialized, err = network.GetVotingInitialized(rp, nodeAccount.Address, nil)
-	if err != nil {
-		return nil, fmt.Errorf("error checking if the node has initialized voting: %w", err)
-	}
-	if !response.IsVotingInitialized {
 		return &response, nil
 	}
 
@@ -213,15 +215,6 @@ func getMinipoolCloseDetails(rp *rocketpool.RocketPool, minipoolAddress common.A
 		}
 		return nil
 	})
-	wg1.Go(func() error {
-		var err error
-		nodeDetails, err := mp.GetNodeDetails(nil)
-		if err != nil {
-			return fmt.Errorf("error getting minipool details %s: %w", minipoolAddress.Hex(), err)
-		}
-		details.DepositBalance = nodeDetails.DepositBalance
-		return nil
-	})
 
 	if err := wg1.Wait(); err != nil {
 		return api.MinipoolCloseDetails{}, err
@@ -247,7 +240,7 @@ func getMinipoolCloseDetails(rp *rocketpool.RocketPool, minipoolAddress common.A
 		}
 
 		// Ignore minipools with an effective balance lower than v3 rewards-vs-exit cap
-		eight := eth.EthToWei(8)
+		eight := math.EthToWei(8)
 		if effectiveBalance.Cmp(eight) == -1 {
 			details.CanClose = false
 			return details, nil
@@ -263,11 +256,11 @@ func getMinipoolCloseDetails(rp *rocketpool.RocketPool, minipoolAddress common.A
 	// If it's dissolved, just close it
 	if details.MinipoolStatus == types.Dissolved {
 		// Get gas estimate
-		gasInfo, err := mp.EstimateCloseGas(opts)
+		gasLimits, err := mp.EstimateCloseGas(opts)
 		if err != nil {
 			return api.MinipoolCloseDetails{}, fmt.Errorf("error estimating close gas for MP %s: %w", minipoolAddress.Hex(), err)
 		}
-		details.GasInfo = gasInfo
+		details.GasLimits = gasLimits
 	} else {
 		// Check if it's an upgraded Atlas-era minipool
 		mpv3, success := minipool.GetMinipoolAsV3(mp)
@@ -297,18 +290,18 @@ func getMinipoolCloseDetails(rp *rocketpool.RocketPool, minipoolAddress common.A
 
 			if details.Distributed {
 				// It's already been distributed so just finalize it
-				gasInfo, err := mpv3.EstimateFinaliseGas(opts)
+				gasLimits, err := mpv3.EstimateFinaliseGas(opts)
 				if err != nil {
 					return api.MinipoolCloseDetails{}, fmt.Errorf("error estimating finalise gas for MP %s: %w", minipoolAddress.Hex(), err)
 				}
-				details.GasInfo = gasInfo
+				details.GasLimits = gasLimits
 			} else {
 				// Do a distribution, which will finalize it
-				gasInfo, err := mpv3.EstimateDistributeBalanceGas(false, opts)
+				gasLimits, err := mpv3.EstimateDistributeBalanceGas(false, opts)
 				if err != nil {
 					return api.MinipoolCloseDetails{}, fmt.Errorf("error estimating distribute balance gas for MP %s: %w", minipoolAddress.Hex(), err)
 				}
-				details.GasInfo = gasInfo
+				details.GasLimits = gasLimits
 			}
 		} else {
 			return api.MinipoolCloseDetails{}, fmt.Errorf("cannot create v3 binding for minipool %s, version %d", minipoolAddress.Hex(), mp.GetVersion())
@@ -319,14 +312,10 @@ func getMinipoolCloseDetails(rp *rocketpool.RocketPool, minipoolAddress common.A
 
 }
 
-func closeMinipool(c *cli.Context, minipoolAddress common.Address) (*api.CloseMinipoolResponse, error) {
+func closeMinipool(c *cli.Command, minipoolAddress common.Address, opts *bind.TransactOpts, bundle bool) (*api.CloseMinipoolResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -347,18 +336,6 @@ func closeMinipool(c *cli.Context, minipoolAddress common.Address) (*api.CloseMi
 	mpv3, success := minipool.GetMinipoolAsV3(mp)
 	if !success {
 		return nil, fmt.Errorf("cannot create v3 binding for minipool %s, version %d", minipoolAddress.Hex(), mp.GetVersion())
-	}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
 	}
 
 	// Get some details
@@ -401,12 +378,91 @@ func closeMinipool(c *cli.Context, minipoolAddress common.Address) (*api.CloseMi
 		}
 		response.TxHash = hash
 	} else {
-		// Do a distribution, which will finalize it
-		hash, err := mpv3.DistributeBalance(false, opts)
+		cfg, err := services.GetConfig(c)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error getting config: %w", err)
 		}
-		response.TxHash = hash
+
+		ec, err := services.GetEthClient(c)
+		if err != nil {
+			return nil, fmt.Errorf("error getting eth client: %w", err)
+		}
+
+		relayUrl := cfg.Smartnode.GetFlashbotsRelayUrl()
+		useBundle := bundle
+		if useBundle && relayUrl == "" {
+			return nil, fmt.Errorf("a bundle was requested but Flashbots bundles are only supported on mainnet; there is no relay for this network")
+		}
+
+		var distributorAddress common.Address
+		if relayUrl != "" {
+			w, err := services.GetWallet(c)
+			if err != nil {
+				return nil, err
+			}
+			nodeAccount, err := w.GetNodeAccount()
+			if err != nil {
+				return nil, err
+			}
+			distributorAddress, err = node.GetDistributorAddress(rp, nodeAccount.Address, nil)
+			if err != nil {
+				return nil, fmt.Errorf("error getting fee distributor address: %w", err)
+			}
+
+			if !useBundle {
+				distributorBalance, err := ec.BalanceAt(context.Background(), distributorAddress, nil)
+				if err != nil {
+					return nil, fmt.Errorf("error getting fee distributor balance: %w", err)
+				}
+				useBundle = distributorBalance.Cmp(big.NewInt(1)) == 0
+			}
+		}
+
+		if !useBundle {
+			// Do a plain distribution, which will finalize it
+			hash, err := mpv3.DistributeBalance(false, opts)
+			if err != nil {
+				return nil, err
+			}
+			response.TxHash = hash
+			return &response, nil
+		}
+
+		// Empty the fee distributor and distribute the minipool balance (which also finalizes
+		// it) atomically in the same block via a Flashbots bundle.
+		distributor, err := node.NewDistributor(rp, distributorAddress, nil)
+		if err != nil {
+			return nil, fmt.Errorf("error creating fee distributor binding: %w", err)
+		}
+
+		// First tx: fee distributor distribute()
+		distributorTx, err := distributor.PrepareDistribute(opts)
+		if err != nil {
+			return nil, fmt.Errorf("error preparing fee distributor distribute tx for bundle: %w", err)
+		}
+
+		// Second tx: minipool distributeBalance(), with bumped nonce and a fixed gas limit
+		opts.Nonce = new(big.Int).SetUint64(distributorTx.Nonce() + 1)
+		opts.GasLimit = distributeBalanceBundleGasLimit
+
+		distBalTx, err := mpv3.PrepareDistributeBalance(false, opts)
+		if err != nil {
+			return nil, fmt.Errorf("error preparing distribute balance tx for bundle on minipool %s: %w", minipoolAddress.Hex(), err)
+		}
+
+		// Send the 2-tx bundle (distribute then distributeBalance)
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), flashbots.DefaultSubmissionTimeout)
+		success, err := flashbots.SubmitBundleAndWait(timeoutCtx, nil, ec, relayUrl, []*gethtypes.Transaction{distributorTx, distBalTx}, flashbots.DefaultBundleBlockCount)
+		cancel()
+		if err != nil {
+			return nil, fmt.Errorf("error sending bundle for distribute+distributeBalance: %w", err)
+		}
+		if !success {
+			return nil, fmt.Errorf("bundle for minipool %s distribute+distributeBalance was not included. Bundles usually require a higher priority fee to get included", minipoolAddress.Hex())
+		}
+
+		// Report the distributeBalance tx hash (the last tx in the bundle).
+		response.TxHash = distBalTx.Hash()
 	}
 
 	// Return response

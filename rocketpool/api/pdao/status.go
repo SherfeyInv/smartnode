@@ -12,19 +12,19 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"github.com/wealdtech/go-ens/v3"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/rocket-pool/rocketpool-go/network"
-	"github.com/rocket-pool/rocketpool-go/node"
+	"github.com/rocket-pool/smartnode/bindings/network"
+	"github.com/rocket-pool/smartnode/bindings/node"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/services/proposals"
 	"github.com/rocket-pool/smartnode/shared/types/api"
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
 )
 
-func getStatus(c *cli.Context) (*api.PDAOStatusResponse, error) {
+func getStatus(c *cli.Command) (*api.PDAOStatusResponse, error) {
 
 	// Get services
 	rp, err := services.GetRocketPool(c)
@@ -101,13 +101,6 @@ func getStatus(c *cli.Context) (*api.PDAOStatusResponse, error) {
 		return nil
 	})
 
-	// Check if Voting is initialized and add to response
-	wg.Go(func() error {
-		var err error
-		response.IsVotingInitialized, err = network.GetVotingInitialized(rp, nodeAccount.Address, nil)
-		return err
-	})
-
 	// Check whether RPL locking is allowed for the node
 	wg.Go(func() error {
 		var err error
@@ -118,7 +111,7 @@ func getStatus(c *cli.Context) (*api.PDAOStatusResponse, error) {
 	// Get the node's locked RPL
 	wg.Go(func() error {
 		var err error
-		response.NodeRPLLocked, err = node.GetNodeRPLLocked(rp, nodeAccount.Address, nil)
+		response.NodeRPLLocked, err = node.GetNodeLockedRPL(rp, nodeAccount.Address, nil)
 		return err
 	})
 
@@ -175,15 +168,10 @@ func getStatus(c *cli.Context) (*api.PDAOStatusResponse, error) {
 		return nil, err
 	}
 
-	// Get the delegated voting power if voting is initialized
-	if response.IsVotingInitialized {
-		totalDelegatedVP, _, _, err := propMgr.GetArtifactsForVoting(response.BlockNumber, nodeAccount.Address)
-		if err != nil {
-			return nil, err
-		}
-		response.TotalDelegatedVp = totalDelegatedVP
-	} else {
-		response.TotalDelegatedVp = nil
+	// Get the delegated voting power
+	response.TotalDelegatedVp, _, _, err = propMgr.GetArtifactsForVoting(response.BlockNumber, nodeAccount.Address)
+	if err != nil {
+		return nil, err
 	}
 
 	// Get the local tree
@@ -203,7 +191,7 @@ func getStatus(c *cli.Context) (*api.PDAOStatusResponse, error) {
 	return &response, nil
 }
 
-func formatResolvedAddress(c *cli.Context, address common.Address) string {
+func formatResolvedAddress(c *cli.Command, address common.Address) string {
 	rp, err := services.GetRocketPool(c)
 	if err != nil {
 		return address.Hex()
@@ -223,6 +211,7 @@ func GetSnapshotVotedProposals(apiDomain string, space string, nodeAddress commo
 		  where: {
 			space: "%s",
 			voter_in: ["%s", "%s"],
+			created_gte: 1727694646
 		  },
 		  orderBy: "created",
 		  orderDirection: desc
@@ -237,7 +226,9 @@ func GetSnapshotVotedProposals(apiDomain string, space string, nodeAddress commo
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	// Check the response code
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("request failed with code %d", resp.StatusCode)
@@ -264,7 +255,7 @@ func GetSnapshotProposals(apiDomain string, space string, state string) (*api.Sn
 		stateFilter = fmt.Sprintf(`, state: "%s"`, state)
 	}
 	query := fmt.Sprintf(`query Proposals {
-	proposals(where: {space: "%s"%s}, orderBy: "created", orderDirection: desc) {
+	proposals(where: {space: "%s"%s, start_gte: 1727694646}, orderBy: "created", orderDirection: desc) {
 	    id
 	    title
 	    choices
@@ -286,7 +277,9 @@ func GetSnapshotProposals(apiDomain string, space string, state string) (*api.Sn
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	// Check the response code
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("request failed with code %d", resp.StatusCode)
@@ -328,7 +321,9 @@ func GetSnapshotVotingPower(apiDomain string, space string, nodeAddress common.A
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	// Check the response code
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("request failed with code %d", resp.StatusCode)

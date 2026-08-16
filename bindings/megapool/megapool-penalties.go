@@ -1,0 +1,42 @@
+package megapool
+
+import (
+	"fmt"
+	"math/big"
+	"sync"
+
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
+
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/transactions/gaslimit"
+)
+
+func EstimatePenaliseGas(rp *rocketpool.RocketPool, megapoolAddress common.Address, block *big.Int, amount *big.Int, opts *bind.TransactOpts) (gaslimit.Limits, error) {
+	megapoolPenalties, err := getRocketMegapoolPenalties(rp, nil)
+	if err != nil {
+		return gaslimit.Limits{}, err
+	}
+	return megapoolPenalties.GetTransactionGasInfo(opts, "penalise", megapoolAddress, block, amount)
+}
+
+func Penalise(rp *rocketpool.RocketPool, megapoolAddress common.Address, block *big.Int, amount *big.Int, opts *bind.TransactOpts) (common.Hash, error) {
+	megapoolPenalties, err := getRocketMegapoolPenalties(rp, nil)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	tx, err := megapoolPenalties.Transact(opts, "penalise", megapoolAddress, block, amount)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("error voting to penalise megapool: %w", err)
+	}
+	return tx.Hash(), nil
+}
+
+// Get contracts
+var rocketMegapoolPenaltiesLock sync.Mutex
+
+func getRocketMegapoolPenalties(rp *rocketpool.RocketPool, opts *bind.CallOpts) (*rocketpool.Contract, error) {
+	rocketMegapoolPenaltiesLock.Lock()
+	defer rocketMegapoolPenaltiesLock.Unlock()
+	return rp.GetContract("rocketMegapoolPenalties", opts)
+}

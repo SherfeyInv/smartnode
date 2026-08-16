@@ -1,0 +1,100 @@
+package pdao
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/color"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
+	"github.com/rocket-pool/smartnode/shared/services/gas"
+	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
+)
+
+func setAllowListedControllers(addressListStr string, yes bool, toJson string) error {
+	if toJson != "" {
+		return fmt.Errorf("allow-listed-controllers cannot be included in a multi-setting proposal (the protocol only supports bool, uint256, and address values in batch proposals)")
+	}
+
+	// Get RP client
+	rp, err := rocketpool.NewClient().WithReady()
+	if err != nil {
+		return err
+	}
+	defer rp.Close()
+
+	if addressListStr == "" {
+		// Ask the user how many addresses should be included in the list
+		numStr := prompt.Prompt("How many addresses do you want to propose as allowlisted controllers? Enter 0 to propose clearing the list", "^\\d+$", "Invalid number.")
+		numAddressesUint, err := strconv.ParseUint(numStr, 0, 64)
+		if err != nil {
+			return fmt.Errorf("'%s' is not a valid number: %w.\n", numStr, err)
+		}
+		numAddr := int(numAddressesUint)
+
+		// Construct a string of addresses
+		var address []string
+		for i := 0; i < numAddr; i++ {
+			promptMsg := fmt.Sprintf(
+				"Please enter address %d of %d:",
+				i+1, numAddr,
+			)
+			promptedAddr := prompt.Prompt(promptMsg, "^0x[0-9a-fA-F]{40}$", "Invalid address")
+
+			// Validate input
+			_, err := cliutils.ValidateAddress("address", promptedAddr)
+			if err != nil {
+				return err
+			}
+			address = append(address, promptedAddr)
+		}
+		addressListStr = strings.Join(address, ",")
+	} else {
+		_, err = cliutils.ValidateAddresses("addressList", addressListStr)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Prompt for confirmation
+	if addressListStr == "" {
+		color.GreenPrintln("You are proposing to remove all allowlisted controllers")
+	} else {
+		color.GreenPrintln("You have selected propose %v as the allowlisted controllers", addressListStr)
+	}
+	fmt.Println()
+
+	if prompt.Declined(yes, "Are you sure you want to propose a new list of allowlisted controllers?") {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
+	canResponse, err := rp.PDAOCanProposeAllowListedControllers(addressListStr)
+	if err != nil {
+		return err
+	}
+
+	// Assign max fees
+	err = gas.AssignMaxFeeAndLimit(canResponse.GasLimits, rp, yes)
+	if err != nil {
+		return err
+	}
+
+	// Submit
+	response, err := rp.PDAOProposeAllowListedControllers(addressListStr, canResponse.BlockNumber)
+	if err != nil {
+		return err
+	}
+	hash := response.TxHash
+
+	fmt.Printf("Proposing allow listed controllers...\n")
+	cliutils.PrintTransactionHash(rp, hash)
+	if _, err = rp.WaitForTransaction(hash); err != nil {
+		return err
+	}
+
+	// Log & return
+	fmt.Println("Proposal successfully created.")
+	return nil
+}

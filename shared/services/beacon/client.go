@@ -1,9 +1,14 @@
 package beacon
 
 import (
+	"io"
+	"math/big"
+	"sort"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/prysmaticlabs/go-bitfield"
-	"github.com/rocket-pool/rocketpool-go/types"
+
+	"github.com/rocket-pool/smartnode/bindings/types"
 )
 
 // API request options
@@ -17,16 +22,6 @@ type SyncStatus struct {
 	Syncing  bool
 	Progress float64
 }
-type Eth2Config struct {
-	GenesisForkVersion           []byte
-	GenesisValidatorsRoot        []byte
-	GenesisEpoch                 uint64
-	GenesisTime                  uint64
-	SecondsPerSlot               uint64
-	SlotsPerEpoch                uint64
-	SecondsPerEpoch              uint64
-	EpochsPerSyncCommitteePeriod uint64
-}
 type Eth2DepositContract struct {
 	ChainID uint64
 	Address common.Address
@@ -38,23 +33,28 @@ type BeaconHead struct {
 	PreviousJustifiedEpoch uint64
 }
 type ValidatorStatus struct {
-	Pubkey                     types.ValidatorPubkey
-	Index                      string
-	WithdrawalCredentials      common.Hash
-	Balance                    uint64
-	Status                     ValidatorState
-	EffectiveBalance           uint64
-	Slashed                    bool
-	ActivationEligibilityEpoch uint64
-	ActivationEpoch            uint64
-	ExitEpoch                  uint64
-	WithdrawableEpoch          uint64
-	Exists                     bool
+	Pubkey                     types.ValidatorPubkey `json:"pubkey"`
+	Index                      string                `json:"index"`
+	WithdrawalCredentials      common.Hash           `json:"withdrawal_credentials"`
+	Balance                    uint64                `json:"balance"`
+	Status                     ValidatorState        `json:"status"`
+	EffectiveBalance           uint64                `json:"effective_balance"`
+	Slashed                    bool                  `json:"slashed"`
+	ActivationEligibilityEpoch uint64                `json:"activation_eligibility_epoch"`
+	ActivationEpoch            uint64                `json:"activation_epoch"`
+	ExitEpoch                  uint64                `json:"exit_epoch"`
+	WithdrawableEpoch          uint64                `json:"withdrawable_epoch"`
+	Exists                     bool                  `json:"exists"`
 }
 type Eth1Data struct {
 	DepositRoot  common.Hash
 	DepositCount uint64
 	BlockHash    common.Hash
+}
+type WithdrawalInfo struct {
+	ValidatorIndex string
+	Address        common.Address
+	Amount         *big.Int
 }
 type BeaconBlock struct {
 	Slot                 uint64
@@ -63,6 +63,8 @@ type BeaconBlock struct {
 	Attestations         []AttestationInfo
 	FeeRecipient         common.Address
 	ExecutionBlockNumber uint64
+	ExecutionBlockHash   common.Hash
+	Withdrawals          []WithdrawalInfo
 }
 type BeaconBlockHeader struct {
 	Slot          uint64
@@ -84,6 +86,9 @@ type Committees interface {
 	// Validators returns the list of validators of the committee at
 	// the provided offset
 	Validators(int) []string
+	// ValidatorCount returns the number of validators in the committee at
+	// the provided offset
+	ValidatorCount(int) int
 	// Count returns the number of committees in the response
 	Count() int
 	// Release returns the reused validators slice buffer to the pool for
@@ -95,7 +100,27 @@ type Committees interface {
 type AttestationInfo struct {
 	AggregationBits bitfield.Bitlist
 	SlotIndex       uint64
-	CommitteeIndex  uint64
+	// Committees represented by AggregationBits
+	Committees bitfield.Bitvector64
+}
+
+func (a *AttestationInfo) CommitteeIndices() []int {
+	out := a.Committees.BitIndices()
+	sort.Ints(out)
+	return out
+}
+
+func (a AttestationInfo) ValidatorAttested(committeeIndex int, position int, committeeSizes map[uint64]int) bool {
+	// Calculate the offset in aggregation_bits
+	committeeOffset := 0
+	for _, c := range a.CommitteeIndices() {
+		if c >= committeeIndex {
+			break
+		}
+		committeeOffset += committeeSizes[uint64(c)]
+	}
+	offset := committeeOffset + position
+	return a.AggregationBits.BitAt(uint64(offset))
 }
 
 // Beacon client type
@@ -130,6 +155,23 @@ const (
 	ValidatorState_WithdrawalDone     ValidatorState = "withdrawal_done"
 )
 
+// SSZ response go into these wrapper types.
+// You can stream Data into a deserializer.
+// Size is the total SSZ payload size from Content-Length; <= 0 if unknown.
+// Fork is the consensus version, e.g, "deneb" or "electra"
+
+type BeaconStateSSZ struct {
+	Data io.ReadCloser
+	Size int64
+	Fork string
+}
+
+type BeaconBlockSSZ struct {
+	Data io.ReadCloser
+	Size int64
+	Fork string
+}
+
 // Beacon client interface
 type Client interface {
 	GetClientType() (BeaconClientType, error)
@@ -142,14 +184,20 @@ type Client interface {
 	GetBeaconHead() (BeaconHead, error)
 	GetValidatorStatusByIndex(index string, opts *ValidatorStatusOptions) (ValidatorStatus, error)
 	GetValidatorStatus(pubkey types.ValidatorPubkey, opts *ValidatorStatusOptions) (ValidatorStatus, error)
+	GetAllValidators() ([]ValidatorStatus, error)
 	GetValidatorStatuses(pubkeys []types.ValidatorPubkey, opts *ValidatorStatusOptions) (map[types.ValidatorPubkey]ValidatorStatus, error)
 	GetValidatorIndex(pubkey types.ValidatorPubkey) (string, error)
 	GetValidatorSyncDuties(indices []string, epoch uint64) (map[string]bool, error)
 	GetValidatorProposerDuties(indices []string, epoch uint64) (map[string]uint64, error)
+	GetValidatorBalances(indices []string, opts *ValidatorStatusOptions) (map[string]*big.Int, error)
+	GetValidatorBalancesSafe(indices []string, opts *ValidatorStatusOptions) (map[string]*big.Int, error)
 	GetDomainData(domainType []byte, epoch uint64, useGenesisFork bool) ([]byte, error)
 	ExitValidator(validatorIndex string, epoch uint64, signature types.ValidatorSignature) error
 	Close() error
 	GetEth1DataForEth2Block(blockId string) (Eth1Data, bool, error)
 	GetCommitteesForEpoch(epoch *uint64) (Committees, error)
 	ChangeWithdrawalCredentials(validatorIndex string, fromBlsPubkey types.ValidatorPubkey, toExecutionAddress common.Address, signature types.ValidatorSignature) error
+
+	GetBeaconStateSSZ(slot uint64) (*BeaconStateSSZ, error)
+	GetBeaconBlockSSZ(slot uint64) (*BeaconBlockSSZ, bool, error)
 }

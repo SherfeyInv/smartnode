@@ -3,20 +3,21 @@ package node
 import (
 	"context"
 	"fmt"
-	"time"
 
-	"github.com/rocket-pool/rocketpool-go/node"
-	"github.com/rocket-pool/rocketpool-go/rewards"
-	rocketpoolapi "github.com/rocket-pool/rocketpool-go/rocketpool"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/node"
+	"github.com/rocket-pool/smartnode/bindings/rewards"
+	rocketpoolapi "github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/rocketpool/validator"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
-	"github.com/rocket-pool/smartnode/shared/utils/validator"
-	"github.com/urfave/cli"
 )
 
-func getSmoothingPoolRegistrationStatus(c *cli.Context) (*api.GetSmoothingPoolRegistrationStatusResponse, error) {
+func getSmoothingPoolRegistrationStatus(c *cli.Command) (*api.GetSmoothingPoolRegistrationStatusResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -66,11 +67,10 @@ func getSmoothingPoolRegistrationStatus(c *cli.Context) (*api.GetSmoothingPoolRe
 	}
 
 	// Get the time the user can next change their opt-in status
-	latestBlockTimeUnix, err := services.GetEthClientLatestBlockTimestamp(ec)
+	latestBlockTime, err := ec.LatestBlockTime(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	latestBlockTime := time.Unix(int64(latestBlockTimeUnix), 0)
 	changeAvailableTime := regChangeTime.Add(intervalTime)
 	response.TimeLeftUntilChangeable = changeAvailableTime.Sub(latestBlockTime)
 
@@ -79,7 +79,7 @@ func getSmoothingPoolRegistrationStatus(c *cli.Context) (*api.GetSmoothingPoolRe
 
 }
 
-func canSetSmoothingPoolStatus(c *cli.Context, status bool) (*api.CanSetSmoothingPoolRegistrationStatusResponse, error) {
+func canSetSmoothingPoolStatus(c *cli.Command, status bool) (*api.CanSetSmoothingPoolRegistrationStatusResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -105,16 +105,16 @@ func canSetSmoothingPoolStatus(c *cli.Context, status bool) (*api.CanSetSmoothin
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := node.EstimateSetSmoothingPoolRegistrationStateGas(rp, status, opts)
+	gasLimits, err := node.EstimateSetSmoothingPoolRegistrationStateGas(rp, status, opts)
 	if err == nil {
-		response.GasInfo = gasInfo
+		response.GasLimits = gasLimits
 	}
 
 	return &response, err
 
 }
 
-func setSmoothingPoolStatus(c *cli.Context, status bool) (*api.SetSmoothingPoolRegistrationStatusResponse, error) {
+func setSmoothingPoolStatus(c *cli.Command, status bool, opts *bind.TransactOpts) (*api.SetSmoothingPoolRegistrationStatusResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -147,18 +147,6 @@ func setSmoothingPoolStatus(c *cli.Context, status bool) (*api.SetSmoothingPoolR
 	// Response
 	response := api.SetSmoothingPoolRegistrationStatusResponse{}
 
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
-
 	// Get node account and distributor address
 	nodeAccount, err := w.GetNodeAccount()
 	if err != nil {
@@ -176,7 +164,7 @@ func setSmoothingPoolStatus(c *cli.Context, status bool) (*api.SetSmoothingPoolR
 			return nil, err
 		}
 
-		err = rocketpool.UpdateFeeRecipientFile(*smoothingPoolContract.Address, cfg)
+		err = rocketpool.UpdateGlobalFeeRecipientFile(*smoothingPoolContract.Address, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -185,13 +173,13 @@ func setSmoothingPoolStatus(c *cli.Context, status bool) (*api.SetSmoothingPoolR
 		err = validator.RestartValidator(cfg, bc, nil, d)
 		if err != nil {
 			// Set the fee recipient back to the node distributor
-			err2 := rocketpool.UpdateFeeRecipientFile(distributor, cfg)
+			err2 := rocketpool.UpdateGlobalFeeRecipientFile(distributor, cfg)
 			if err2 != nil {
 				return nil, fmt.Errorf("***WARNING***\nError restarting validator: [%s]\nError setting fee recipient back to your node's distributor: [%w]\nYour node now has the Smoothing Pool as its fee recipient, even though you aren't opted in!\nPlease visit the Rocket Pool Discord server for help with these errors, so it can be set back to your node's distributor.", err.Error(), err2)
 			}
 
 			// Restart the VC but don't pay attention to the errors, since a restart error got us here in the first place
-			validator.RestartValidator(cfg, bc, nil, d)
+			_ = validator.RestartValidator(cfg, bc, nil, d)
 
 			return nil, fmt.Errorf("Error restarting validator after updating the fee recipient to the Smoothing Pool: [%w]\nYour fee recipient has been set back to your node's distributor contract.\nYou have not been opted into the Smoothing Pool.", err)
 		}

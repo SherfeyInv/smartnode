@@ -1,30 +1,30 @@
 package odao
 
 import (
-	"fmt"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 
-	"github.com/rocket-pool/rocketpool-go/dao"
-	"github.com/rocket-pool/rocketpool-go/dao/trustednode"
-	rptypes "github.com/rocket-pool/rocketpool-go/types"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/dao"
+	"github.com/rocket-pool/smartnode/bindings/dao/trustednode"
+	rptypes "github.com/rocket-pool/smartnode/bindings/types"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canExecuteProposal(c *cli.Context, proposalId uint64) (*api.CanExecuteTNDAOProposalResponse, error) {
+func canExecuteProposal(c *cli.Command, proposalId uint64) (*api.CanExecuteTNDAOProposalResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
 		return nil, err
 	}
-	if err := services.RequireRocketStorage(c); err != nil {
-		return nil, err
-	}
 	w, err := services.GetWallet(c)
 	if err != nil {
+		return nil, err
+	}
+	if err := services.RequireRocketStorage(c); err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -62,9 +62,9 @@ func canExecuteProposal(c *cli.Context, proposalId uint64) (*api.CanExecuteTNDAO
 		if err != nil {
 			return err
 		}
-		gasInfo, err := trustednode.EstimateExecuteProposalGas(rp, proposalId, opts)
+		gasLimits, err := trustednode.EstimateExecuteProposalGas(rp, proposalId, opts)
 		if err == nil {
-			response.GasInfo = gasInfo
+			response.GasLimits = gasLimits
 		}
 		return err
 	})
@@ -75,22 +75,18 @@ func canExecuteProposal(c *cli.Context, proposalId uint64) (*api.CanExecuteTNDAO
 	}
 
 	// Update & return response
-	response.CanExecute = !(response.DoesNotExist || response.InvalidState)
+	response.CanExecute = !response.DoesNotExist && !response.InvalidState
 	return &response, nil
 
 }
 
-func executeProposal(c *cli.Context, proposalId uint64) (*api.ExecuteTNDAOProposalResponse, error) {
+func executeProposal(c *cli.Command, proposalId uint64, opts *bind.TransactOpts) (*api.ExecuteTNDAOProposalResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
 		return nil, err
 	}
 	if err := services.RequireRocketStorage(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -100,18 +96,6 @@ func executeProposal(c *cli.Context, proposalId uint64) (*api.ExecuteTNDAOPropos
 
 	// Response
 	response := api.ExecuteTNDAOProposalResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Cancel proposal
 	hash, err := trustednode.ExecuteProposal(rp, proposalId, opts)

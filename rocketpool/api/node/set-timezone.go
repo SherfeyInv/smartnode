@@ -1,18 +1,19 @@
 package node
 
 import (
-	"fmt"
-	_ "time/tzdata"
+	_ "time/tzdata" // Load the embedded tz data
 
-	"github.com/rocket-pool/rocketpool-go/node"
-	"github.com/urfave/cli"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/node"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canSetTimezoneLocation(c *cli.Context, timezoneLocation string) (*api.CanSetNodeTimezoneResponse, error) {
+func canSetTimezoneLocation(c *cli.Command, timezoneLocation string) (*api.CanSetNodeTimezoneResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
@@ -35,24 +36,20 @@ func canSetTimezoneLocation(c *cli.Context, timezoneLocation string) (*api.CanSe
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := node.EstimateSetTimezoneLocationGas(rp, timezoneLocation, opts)
+	gasLimits, err := node.EstimateSetTimezoneLocationGas(rp, timezoneLocation, opts)
 	if err != nil {
 		return nil, err
 	}
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	response.CanSet = true
 	return &response, nil
 
 }
 
-func setTimezoneLocation(c *cli.Context, timezoneLocation string) (*api.SetNodeTimezoneResponse, error) {
+func setTimezoneLocation(c *cli.Command, timezoneLocation string, opts *bind.TransactOpts) (*api.SetNodeTimezoneResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -62,18 +59,6 @@ func setTimezoneLocation(c *cli.Context, timezoneLocation string) (*api.SetNodeT
 
 	// Response
 	response := api.SetNodeTimezoneResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Set timezone location
 	hash, err := node.SetTimezoneLocation(rp, timezoneLocation, opts)

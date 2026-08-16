@@ -3,18 +3,19 @@ package pdao
 import (
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/dao/protocol"
-	"github.com/rocket-pool/rocketpool-go/dao/security"
-	"github.com/rocket-pool/rocketpool-go/node"
+	"github.com/urfave/cli/v3"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/protocol"
+	"github.com/rocket-pool/smartnode/bindings/dao/security"
+	"github.com/rocket-pool/smartnode/bindings/node"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
-	"github.com/urfave/cli"
-	"golang.org/x/sync/errgroup"
 )
 
-func canProposeInviteToSecurityCouncil(c *cli.Context, id string, address common.Address) (*api.PDAOCanProposeInviteToSecurityCouncilResponse, error) {
+func canProposeInviteToSecurityCouncil(c *cli.Command, id string, address common.Address) (*api.PDAOCanProposeInviteToSecurityCouncilResponse, error) {
 	// Get services
 	w, err := services.GetWallet(c)
 	if err != nil {
@@ -69,7 +70,7 @@ func canProposeInviteToSecurityCouncil(c *cli.Context, id string, address common
 	response.IsRplLockingDisallowed = !isRplLockingAllowed
 
 	// return if proposing is not possible
-	response.CanPropose = !(response.MemberAlreadyExists || response.IsRplLockingDisallowed)
+	response.CanPropose = !response.MemberAlreadyExists && !response.IsRplLockingDisallowed
 	if !response.CanPropose {
 		return &response, nil
 	}
@@ -86,24 +87,20 @@ func canProposeInviteToSecurityCouncil(c *cli.Context, id string, address common
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := protocol.EstimateProposeInviteToSecurityCouncilGas(rp, message, id, address, blockNumber, pollard, opts)
+	gasLimits, err := protocol.EstimateProposeInviteToSecurityCouncilGas(rp, message, id, address, blockNumber, pollard, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	// Update & return response
 	response.BlockNumber = blockNumber
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return &response, nil
 }
 
-func proposeInviteToSecurityCouncil(c *cli.Context, id string, address common.Address, blockNumber uint32) (*api.PDAOProposeInviteToSecurityCouncilResponse, error) {
+func proposeInviteToSecurityCouncil(c *cli.Command, id string, address common.Address, blockNumber uint32, opts *bind.TransactOpts) (*api.PDAOProposeInviteToSecurityCouncilResponse, error) {
 	// Get services
 	cfg, err := services.GetConfig(c)
-	if err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
 	if err != nil {
 		return nil, err
 	}
@@ -118,18 +115,6 @@ func proposeInviteToSecurityCouncil(c *cli.Context, id string, address common.Ad
 
 	// Response
 	response := api.PDAOProposeInviteToSecurityCouncilResponse{}
-
-	// Get node account
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Propose
 	message := fmt.Sprintf("invite %s (%s) to the security council", id, address.Hex())

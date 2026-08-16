@@ -6,29 +6,25 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/urfave/cli"
 
-	"github.com/rocket-pool/rocketpool-go/types"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
-	"github.com/rocket-pool/rocketpool-go/utils/strings"
+	"github.com/rocket-pool/smartnode/bindings/types"
+	"github.com/rocket-pool/smartnode/bindings/utils/strings"
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/color"
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
-	"github.com/rocket-pool/smartnode/shared/utils/math"
 )
 
 const (
-	colorBlue             string = "\033[36m"
-	colorReset            string = "\033[0m"
-	colorGreen            string = "\033[32m"
-	signallingAddressLink string = "https://docs.rocketpool.net/guides/houston/participate#setting-your-snapshot-signalling-address"
-	challengeLink         string = "https://docs.rocketpool.net/guides/houston/pdao#challenge-process"
+	signallingAddressLink string = "https://docs.rocketpool.net/pdao/participate#setting-your-snapshot-signalling-address"
+	challengeLink         string = "https://docs.rocketpool.net/pdao#challenge-process"
 )
 
-func getStatus(c *cli.Context) error {
+func getStatus() error {
 
 	// Get RP client
-	rp := rocketpool.NewClientFromCtx(c)
+	rp := rocketpool.NewClient()
 	defer rp.Close()
 
 	// Get wallet status
@@ -74,13 +70,12 @@ func getStatus(c *cli.Context) error {
 	claimableBonds := claimableBondsResponse.ClaimableBonds
 
 	// Signalling Status
-	fmt.Printf("%s=== Signalling on Snapshot ===%s\n", colorGreen, colorReset)
+	color.GreenPrintln("=== Signalling on Snapshot ===")
 	blankAddress := common.Address{}
 	if response.SignallingAddress == blankAddress {
 		fmt.Printf("The node does not currently have a snapshot signalling address set.\nTo learn more about snapshot signalling, please visit %s.\n", signallingAddressLink)
 	} else {
-		fmt.Printf("The node has a signalling address of %s%s%s which can represent it when voting on Rocket Pool Snapshot governance proposals.", colorBlue, response.SignallingAddressFormatted, colorReset)
-		fmt.Println()
+		fmt.Printf("The node has a signalling address of %s which can represent it when voting on Rocket Pool Snapshot governance proposals.\n", color.LightBlue(response.SignallingAddressFormatted))
 	}
 
 	if response.SnapshotResponse.Error != "" {
@@ -97,38 +92,34 @@ func getStatus(c *cli.Context) error {
 	}
 
 	// Onchain Voting Status
-	fmt.Printf("%s=== Onchain Voting ===%s\n", colorGreen, colorReset)
-	if response.IsVotingInitialized {
-		fmt.Printf("The node %s%s%s has been initialized for onchain voting.\n", colorBlue, response.AccountAddressFormatted, colorReset)
-	} else {
-		fmt.Printf("The node %s%s%s has NOT been initialized for onchain voting. You need to run `rocketpool pdao initialize-voting` to participate in onchain votes.\n", colorBlue, response.AccountAddressFormatted, colorReset)
-	}
+	color.GreenPrintln("=== Onchain Voting ===")
 
-	if response.OnchainVotingDelegate == blankAddress {
+	switch response.OnchainVotingDelegate {
+	case blankAddress:
 		fmt.Println("The node doesn't have a delegate, which means it can vote directly on onchain proposals after it initializes voting.")
-	} else if response.OnchainVotingDelegate == response.AccountAddress {
+	case response.AccountAddress:
 		fmt.Println("The node doesn't have a delegate, which means it can vote directly on onchain proposals. You can have another node represent you by running `rocketpool p svd <address>`.")
-	} else {
-		fmt.Printf("The node has a voting delegate of %s%s%s which can represent it when voting on Rocket Pool onchain governance proposals.\n", colorBlue, response.OnchainVotingDelegateFormatted, colorReset)
+	default:
+		fmt.Printf("The node has a voting delegate of %s which can represent it when voting on Rocket Pool onchain governance proposals.\n", color.LightBlue(response.OnchainVotingDelegateFormatted))
 	}
-	fmt.Printf("The node's local voting power: %.10f\n", eth.WeiToEth(response.VotingPower))
+	fmt.Printf("The node's local voting power: %.10f\n", math.WeiToEth(response.VotingPower))
 
 	if response.IsNodeRegistered {
-		fmt.Printf("Total voting power delegated to the node: %.10f\n", eth.WeiToEth(response.TotalDelegatedVp))
+		fmt.Printf("Total voting power delegated to the node: %.10f\n", math.WeiToEth(response.TotalDelegatedVp))
 	} else {
 		fmt.Print("The node must register using 'rocketpool node register' to be eligible to receive delegated voting power.\n")
 	}
 
-	fmt.Printf("Network total initialized voting power: %.10f\n", eth.WeiToEth(response.SumVotingPower))
+	fmt.Printf("Network total initialized voting power: %.10f\n", math.WeiToEth(response.SumVotingPower))
 	fmt.Println("")
 
 	// Claimable Bonds Status:
-	fmt.Printf("%s=== Claimable RPL Bonds ===%s\n", colorGreen, colorReset)
+	color.GreenPrintln("=== Claimable RPL Bonds ===")
 	if response.IsRPLLockingAllowed {
 		fmt.Print("The node is allowed to lock RPL to create governance proposals/challenges.\n")
 		if response.NodeRPLLocked.Cmp(big.NewInt(0)) != 0 {
 			fmt.Printf("The node currently has %.6f RPL locked.\n",
-				math.RoundDown(eth.WeiToEth(response.NodeRPLLocked), 6))
+				math.RoundDown(math.WeiToEth(response.NodeRPLLocked), 6))
 		}
 
 	} else {
@@ -142,7 +133,7 @@ func getStatus(c *cli.Context) error {
 	fmt.Println("")
 
 	// Check if PDAO proposal checking duty is enabled
-	fmt.Printf("%s=== PDAO Proposal Checking Duty ===%s\n", colorGreen, colorReset)
+	color.GreenPrintln("=== PDAO Proposal Checking Duty ===")
 	// Make sure the user opted into this duty
 	if response.VerifyEnabled {
 		fmt.Println("The node has PDAO proposal checking duties enabled. It will periodically check for proposals to challenge.")
@@ -153,7 +144,7 @@ func getStatus(c *cli.Context) error {
 	fmt.Println("")
 
 	// Claimable Bonds Status:
-	fmt.Printf("%s=== Pending, Active and Succeeded Proposals ===%s\n", colorGreen, colorReset)
+	color.GreenPrintln("=== Pending, Active and Succeeded Proposals ===")
 	// Get proposals by state
 	stateProposals := map[string][]api.PDAOProposalWithNodeVoteDirection{}
 	for _, proposal := range allProposals.Proposals {
@@ -185,7 +176,8 @@ func getStatus(c *cli.Context) error {
 		// Print message for Succeeded Proposals
 		if stateName == "Succeeded" {
 			succeededExists = true
-			fmt.Printf("%sThe following proposal(s) have succeeded and are waiting to be executed. Use `rocketpool pdao proposals execute` to execute.%s\n\n", colorBlue, colorReset)
+			color.LightBluePrintln("The following proposal(s) have succeeded and are waiting to be executed. Use `rocketpool pdao proposals execute` to execute.")
+			fmt.Println()
 		}
 
 		// Proposal state count

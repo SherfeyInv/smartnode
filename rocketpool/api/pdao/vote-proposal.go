@@ -1,21 +1,20 @@
 package pdao
 
 import (
-	"fmt"
-
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/dao/protocol"
-	"github.com/rocket-pool/rocketpool-go/types"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/protocol"
+	"github.com/rocket-pool/smartnode/bindings/types"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/services/proposals"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canVoteOnProposal(c *cli.Context, proposalId uint64, voteDirection types.VoteDirection) (*api.CanVoteOnPDAOProposalResponse, error) {
+func canVoteOnProposal(c *cli.Command, proposalId uint64, voteDirection types.VoteDirection) (*api.CanVoteOnPDAOProposalResponse, error) {
 	// Get services
 	cfg, err := services.GetConfig(c)
 	if err != nil {
@@ -100,7 +99,7 @@ func canVoteOnProposal(c *cli.Context, proposalId uint64, voteDirection types.Vo
 
 	// Check data
 	response.InsufficientPower = (response.VotingPower.Cmp(common.Big0) == 0)
-	response.CanVote = !(response.DoesNotExist || response.InvalidState || response.InsufficientPower || response.AlreadyVoted)
+	response.CanVote = !response.DoesNotExist && !response.InvalidState && !response.InsufficientPower && !response.AlreadyVoted
 	if !response.CanVote {
 		return &response, nil
 	}
@@ -110,17 +109,17 @@ func canVoteOnProposal(c *cli.Context, proposalId uint64, voteDirection types.Vo
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := protocol.EstimateVoteOnProposalGas(rp, proposalId, voteDirection, totalDelegatedVP, nodeIndex, proof, opts)
+	gasLimits, err := protocol.EstimateVoteOnProposalGas(rp, proposalId, voteDirection, totalDelegatedVP, nodeIndex, proof, opts)
 	if err != nil {
 		return nil, err
 	}
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 
 	// Update & return response
 	return &response, nil
 }
 
-func voteOnProposal(c *cli.Context, proposalId uint64, voteDirection types.VoteDirection) (*api.VoteOnPDAOProposalResponse, error) {
+func voteOnProposal(c *cli.Command, proposalId uint64, voteDirection types.VoteDirection, opts *bind.TransactOpts) (*api.VoteOnPDAOProposalResponse, error) {
 	// Get services
 	cfg, err := services.GetConfig(c)
 	if err != nil {
@@ -148,12 +147,6 @@ func voteOnProposal(c *cli.Context, proposalId uint64, voteDirection types.VoteD
 		return nil, err
 	}
 
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
 	// Get the block used by the proposal
 	proposalBlock, err := protocol.GetProposalBlock(rp, proposalId, nil)
 	if err != nil {
@@ -168,12 +161,6 @@ func voteOnProposal(c *cli.Context, proposalId uint64, voteDirection types.VoteD
 	totalDelegatedVP, nodeIndex, proof, err := propMgr.GetArtifactsForVoting(proposalBlock, nodeAccount.Address)
 	if err != nil {
 		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
 	}
 
 	// Vote on proposal

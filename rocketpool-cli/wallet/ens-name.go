@@ -3,22 +3,27 @@ package wallet
 import (
 	"fmt"
 
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/color"
+	promptcli "github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
-	"github.com/urfave/cli"
 )
 
-func setEnsName(c *cli.Context, name string) error {
+func setEnsName(name string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
 	defer rp.Close()
 
-	fmt.Printf("This will confirm the node's ENS name as '%s'.\n\n%sNOTE: to confirm your name, you must first register it with the ENS application at https://app.ens.domains.\nWe recommend using a hardware wallet as the base domain, and registering your node as a subdomain of it.%s\n\n", name, colorYellow, colorReset)
+	fmt.Printf("This will confirm the node's ENS name as '%s'.\n", name)
+	fmt.Println()
+	color.YellowPrintln("NOTE: to confirm your name, you must first register it with the ENS application at https://app.ens.domains.")
+	color.YellowPrintln("We recommend using a hardware wallet as the base domain, and registering your node as a subdomain of it.")
+	fmt.Println()
 
 	// Get gas estimate
 	estimateGasSetName, err := rp.EstimateGasSetEnsName(name)
@@ -27,12 +32,12 @@ func setEnsName(c *cli.Context, name string) error {
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(estimateGasSetName.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(estimateGasSetName.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
-	if !cliutils.Confirm("Are you sure you want to confirm your node's ENS name?") {
+	if !promptcli.Confirm("Are you sure you want to confirm your node's ENS name?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}

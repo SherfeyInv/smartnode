@@ -230,7 +230,7 @@ func (d *DropDown) SetListStyles(unselected, selected tcell.Style) *DropDown {
 func (d *DropDown) SetFormAttributes(labelWidth int, labelColor, bgColor, fieldTextColor, fieldBgColor tcell.Color) tview.FormItem {
 	d.labelWidth = labelWidth
 	d.labelColor = labelColor
-	d.Box.SetBackgroundColor(bgColor)
+	d.SetBackgroundColor(bgColor)
 	d.fieldTextColor = fieldTextColor
 	d.fieldBackgroundColor = fieldBgColor
 	return d
@@ -322,7 +322,7 @@ func (d *DropDown) SetFinishedFunc(handler func(key tcell.Key)) tview.FormItem {
 
 // Draw draws this primitive onto the screen.
 func (d *DropDown) Draw(screen tcell.Screen) {
-	d.Box.DrawForSubclass(screen, d)
+	d.DrawForSubclass(screen, d)
 
 	// Prepare.
 	x, y, width, height := d.GetInnerRect()
@@ -333,10 +333,7 @@ func (d *DropDown) Draw(screen tcell.Screen) {
 
 	// Draw label.
 	if d.labelWidth > 0 {
-		labelWidth := d.labelWidth
-		if labelWidth > rightLimit-x {
-			labelWidth = rightLimit - x
-		}
+		labelWidth := min(d.labelWidth, rightLimit-x)
 		tview.Print(screen, d.label, x, y, labelWidth, tview.AlignLeft, d.labelColor)
 		x += labelWidth
 	} else {
@@ -414,10 +411,7 @@ func (d *DropDown) Draw(screen tcell.Screen) {
 		lheight := len(d.options)
 		_, sheight := screen.Size()
 		if ly+lheight >= sheight && ly-2 > lheight-ly {
-			ly = y - lheight
-			if ly < 0 {
-				ly = 0
-			}
+			ly = max(y-lheight, 0)
 		}
 		if ly+lheight >= sheight {
 			lheight = sheight - ly

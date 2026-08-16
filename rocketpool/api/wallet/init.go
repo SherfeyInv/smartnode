@@ -3,19 +3,16 @@ package wallet
 import (
 	"errors"
 
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/services/wallet"
 	"github.com/rocket-pool/smartnode/shared/types/api"
 )
 
-func initWallet(c *cli.Context) (*api.InitWalletResponse, error) {
+func initWalletWithPath(c *cli.Command, derivationPath string) (*api.InitWalletResponse, error) {
 
 	// Get services
-	if err := services.RequireNodePassword(c); err != nil {
-		return nil, err
-	}
 	w, err := services.GetWallet(c)
 	if err != nil {
 		return nil, err
@@ -30,7 +27,7 @@ func initWallet(c *cli.Context) (*api.InitWalletResponse, error) {
 	}
 
 	// Get the derivation path
-	path := c.String("derivation-path")
+	path := derivationPath
 	switch path {
 	case "":
 		path = wallet.DefaultNodeKeyPath

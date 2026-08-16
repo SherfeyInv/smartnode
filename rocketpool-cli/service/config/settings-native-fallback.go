@@ -2,6 +2,7 @@ package config
 
 import (
 	"github.com/rivo/tview"
+
 	"github.com/rocket-pool/smartnode/shared/services/config"
 )
 
@@ -29,7 +30,7 @@ func NewNativeFallbackConfigPage(home *settingsNativeHome) *NativeFallbackConfig
 		home.homePage,
 		"settings-native-fallback",
 		"Fallback Clients",
-		"Select this to manage a separate pair of externally-managed Execution and Consensus clients that the Smartnode will use if your main Execution or Consensus clients ever go offline.",
+		"Select this to manage a separate pair of externally-managed Execution and Consensus clients that the Smart Node will use if your main Execution or Consensus clients ever go offline.",
 		configPage.layout.grid,
 	)
 
@@ -53,7 +54,7 @@ func (configPage *NativeFallbackConfigPage) createContent() {
 	// Set up the form items
 	configPage.useFallbackBox = createParameterizedCheckbox(&configPage.masterConfig.UseFallbackClients)
 	configPage.reconnectDelay = createParameterizedStringField(&configPage.masterConfig.ReconnectDelay)
-	configPage.fallbackItems = createParameterizedFormItems(configPage.masterConfig.FallbackNormal.GetParameters(), configPage.layout.descriptionBox)
+	configPage.fallbackItems = createParameterizedFormItems(configPage.masterConfig.FallbackNormal.GetParameters(), configPage.layout)
 
 	// Map the parameters to the form items in the layout
 	configPage.layout.mapParameterizedFormItems(configPage.useFallbackBox, configPage.reconnectDelay)

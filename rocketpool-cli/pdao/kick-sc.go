@@ -7,15 +7,16 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
-	"github.com/urfave/cli"
 )
 
-func proposeSecurityCouncilKick(c *cli.Context) error {
+func proposeSecurityCouncilKick(addressesFlag string, yes bool) error {
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -29,8 +30,7 @@ func proposeSecurityCouncilKick(c *cli.Context) error {
 
 	// Get the address
 	var addresses []common.Address
-	addressesString := c.String("addresses")
-	if addressesString == "" {
+	if addressesFlag == "" {
 		// Print the members
 		if len(membersResponse.Members) == 0 {
 			fmt.Printf("There are no security council members.")
@@ -41,7 +41,7 @@ func proposeSecurityCouncilKick(c *cli.Context) error {
 		}
 
 		for {
-			indexSelection := cliutils.Prompt("Which members would you like to kick? Use a comma separated list (such as '1,2,3') to select multiple members.", "^\\d+(,\\d+)*$", "Invalid index selection")
+			indexSelection := prompt.Prompt("Which members would you like to kick? Use a comma separated list (such as '1,2,3') to select multiple members.", "^\\d+(,\\d+)*$", "Invalid index selection")
 			elements := strings.Split(indexSelection, ",")
 			allValid := true
 			indices := []uint64{}
@@ -76,7 +76,7 @@ func proposeSecurityCouncilKick(c *cli.Context) error {
 			}
 		}
 	} else {
-		addresses, err = cliutils.ValidateAddresses("addresses", addressesString)
+		addresses, err = cliutils.ValidateAddresses("addresses", addressesFlag)
 		if err != nil {
 			return err
 		}
@@ -111,13 +111,13 @@ func proposeSecurityCouncilKick(c *cli.Context) error {
 		}
 
 		// Assign max fee
-		err = gas.AssignMaxFeeAndLimit(canResponse.GasInfo, rp, c.Bool("yes"))
+		err = gas.AssignMaxFeeAndLimit(canResponse.GasLimits, rp, yes)
 		if err != nil {
 			return err
 		}
 
 		// Prompt for confirmation
-		if !(c.Bool("yes") || cliutils.Confirm(fmt.Sprintf("Are you sure you want to propose kicking %s (%s) from the security council?", *id, address.Hex()))) {
+		if prompt.Declined(yes, "Are you sure you want to propose kicking %s (%s) from the security council?", *id, address.Hex()) {
 			fmt.Println("Cancelled.")
 			return nil
 		}
@@ -152,7 +152,7 @@ func proposeSecurityCouncilKick(c *cli.Context) error {
 		}
 
 		// Assign max fee
-		err = gas.AssignMaxFeeAndLimit(canResponse.GasInfo, rp, c.Bool("yes"))
+		err = gas.AssignMaxFeeAndLimit(canResponse.GasLimits, rp, yes)
 		if err != nil {
 			return err
 		}
@@ -164,7 +164,7 @@ func proposeSecurityCouncilKick(c *cli.Context) error {
 		}
 
 		// Prompt for confirmation
-		if !(c.Bool("yes") || cliutils.Confirm(fmt.Sprintf("Are you sure you want to propose kicking these members from the security council?\n%s", kickString))) {
+		if prompt.Declined(yes, "Are you sure you want to propose kicking these members from the security council?\n%s", kickString) {
 			fmt.Println("Cancelled.")
 			return nil
 		}

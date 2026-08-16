@@ -5,20 +5,18 @@ import (
 	"math/big"
 	"strconv"
 
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
-	"github.com/urfave/cli"
-
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
-	"github.com/rocket-pool/smartnode/shared/utils/math"
 )
 
-func bidOnLot(c *cli.Context) error {
+func bidOnLot(lot, amount string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -46,12 +44,12 @@ func bidOnLot(c *cli.Context) error {
 
 	// Get selected lot
 	var selectedLot api.LotDetails
-	if c.String("lot") != "" {
+	if lot != "" {
 
 		// Get selected lot index
-		selectedIndex, err := strconv.ParseUint(c.String("lot"), 10, 64)
+		selectedIndex, err := strconv.ParseUint(lot, 10, 64)
 		if err != nil {
-			return fmt.Errorf("Invalid lot ID '%s': %w", c.String("lot"), err)
+			return fmt.Errorf("Invalid lot ID '%s': %w", lot, err)
 		}
 
 		// Get matching lot
@@ -72,32 +70,32 @@ func bidOnLot(c *cli.Context) error {
 		// Prompt for lot selection
 		options := make([]string, len(openLots))
 		for li, lot := range openLots {
-			options[li] = fmt.Sprintf("lot %d (%.6f RPL available @ %.6f ETH per RPL)", lot.Details.Index, math.RoundDown(eth.WeiToEth(lot.Details.RemainingRPLAmount), 6), math.RoundDown(eth.WeiToEth(lot.Details.CurrentPrice), 6))
+			options[li] = fmt.Sprintf("lot %d (%.6f RPL available @ %.6f ETH per RPL)", lot.Details.Index, math.RoundDown(math.WeiToEth(lot.Details.RemainingRPLAmount), 6), math.RoundDown(math.WeiToEth(lot.Details.CurrentPrice), 6))
 		}
-		selected, _ := cliutils.Select("Please select a lot to bid on:", options)
+		selected, _ := prompt.Select("Please select a lot to bid on:", options)
 		selectedLot = openLots[selected]
 
 	}
 
 	// Get bid amount
 	var amountWei *big.Int
-	if c.String("amount") == "max" {
+	if amount == "max" {
 
 		// Set bid amount to maximum
 		var tmp big.Int
 		var maxAmount big.Int
 		tmp.Mul(selectedLot.Details.RemainingRPLAmount, selectedLot.Details.CurrentPrice)
-		maxAmount.Quo(&tmp, eth.EthToWei(1))
+		maxAmount.Quo(&tmp, math.EthToWei(1))
 		amountWei = &maxAmount
 
-	} else if c.String("amount") != "" {
+	} else if amount != "" {
 
 		// Parse amount
-		bidAmount, err := strconv.ParseFloat(c.String("amount"), 64)
+		bidAmount, err := strconv.ParseFloat(amount, 64)
 		if err != nil {
-			return fmt.Errorf("Invalid bid amount '%s': %w", c.String("amount"), err)
+			return fmt.Errorf("Invalid bid amount '%s': %w", amount, err)
 		}
-		amountWei = eth.EthToWei(bidAmount)
+		amountWei = math.EthToWei(bidAmount)
 
 	} else {
 
@@ -105,20 +103,20 @@ func bidOnLot(c *cli.Context) error {
 		var tmp big.Int
 		var maxAmount big.Int
 		tmp.Mul(selectedLot.Details.RemainingRPLAmount, selectedLot.Details.CurrentPrice)
-		maxAmount.Quo(&tmp, eth.EthToWei(1))
+		maxAmount.Quo(&tmp, math.EthToWei(1))
 
 		// Prompt for maximum amount
-		if cliutils.Confirm(fmt.Sprintf("Would you like to bid the maximum amount of ETH (%.6f ETH)?", math.RoundDown(eth.WeiToEth(&maxAmount), 6))) {
+		if prompt.Confirm("Would you like to bid the maximum amount of ETH (%.6f ETH)?", math.RoundDown(math.WeiToEth(&maxAmount), 6)) {
 			amountWei = &maxAmount
 		} else {
 
 			// Prompt for custom amount
-			inputAmount := cliutils.Prompt("Please enter an amount of ETH to bid:", "^\\d+(\\.\\d+)?$", "Invalid amount")
+			inputAmount := prompt.Prompt("Please enter an amount of ETH to bid:", "^\\d+(\\.\\d+)?$", "Invalid amount")
 			bidAmount, err := strconv.ParseFloat(inputAmount, 64)
 			if err != nil {
 				return fmt.Errorf("Invalid bid amount '%s': %w", inputAmount, err)
 			}
-			amountWei = eth.EthToWei(bidAmount)
+			amountWei = math.EthToWei(bidAmount)
 
 		}
 
@@ -138,13 +136,13 @@ func bidOnLot(c *cli.Context) error {
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canBid.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canBid.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm(fmt.Sprintf("Are you sure you want to bid %.6f ETH on lot %d? Bids are final and non-refundable.", math.RoundDown(eth.WeiToEth(amountWei), 6), selectedLot.Details.Index))) {
+	if prompt.Declined(yes, "Are you sure you want to bid %.6f ETH on lot %d? Bids are final and non-refundable.", math.RoundDown(math.WeiToEth(amountWei), 6), selectedLot.Details.Index) {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -162,7 +160,7 @@ func bidOnLot(c *cli.Context) error {
 	}
 
 	// Log & return
-	fmt.Printf("Successfully bid %.6f ETH on lot %d.\n", math.RoundDown(eth.WeiToEth(amountWei), 6), selectedLot.Details.Index)
+	fmt.Printf("Successfully bid %.6f ETH on lot %d.\n", math.RoundDown(math.WeiToEth(amountWei), 6), selectedLot.Details.Index)
 	return nil
 
 }

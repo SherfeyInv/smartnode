@@ -2,19 +2,21 @@ package node
 
 import (
 	"fmt"
+	"math/big"
 	"time"
 
-	"github.com/urfave/cli"
-
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/color"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
+	"github.com/rocket-pool/smartnode/shared/math"
 	rprewards "github.com/rocket-pool/smartnode/shared/services/rewards"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
 )
 
-func getRewards(c *cli.Context) error {
+func getRewards(yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -47,8 +49,8 @@ func getRewards(c *cli.Context) error {
 	// Download the Merkle trees for all unclaimed intervals that don't exist
 	if len(missingIntervals) > 0 || len(invalidIntervals) > 0 {
 		fmt.Println()
-		fmt.Printf("%sNOTE: If you would like to regenerate these tree files manually, please answer `n` to the prompt below and run `rocketpool network generate-rewards-tree` before claiming your rewards.%s\n", colorBlue, colorReset)
-		if !cliutils.Confirm("Would you like to download all missing rewards tree files now?") {
+		color.LightBluePrintln("NOTE: If you would like to regenerate these tree files manually, please answer `n` to the prompt below and run `rocketpool network generate-rewards-tree` before claiming your rewards.")
+		if !yes || !prompt.Confirm("Would you like to download all missing rewards tree files now?") {
 			fmt.Println("Cancelled.")
 			return nil
 		}
@@ -85,19 +87,31 @@ func getRewards(c *cli.Context) error {
 		return err
 	}
 
-	fmt.Printf("%sNOTE: Legacy rewards from pre-Redstone are temporarily not being included in the below figures. They will be added back in a future release. We apologize for the inconvenience!%s\n\n", colorYellow, colorReset)
+	beaconBalances, err := rp.GetValidatorMapAndBalances()
+	if err != nil {
+		return err
+	}
+	// Add the megapool unskimmed beacon rewards, if available.
+	// NodeBond and NodeShareOfCLBalance are nil for nodes without a megapool (legacy minipools only).
+	if beaconBalances.NodeBond != nil && beaconBalances.NodeShareOfCLBalance != nil {
+		megapoolUnskimmedRewards := new(big.Int).Sub(beaconBalances.NodeBond, beaconBalances.NodeShareOfCLBalance)
+		rewards.BeaconRewards = rewards.BeaconRewards + math.WeiToEth(megapoolUnskimmedRewards)
+	}
 
 	fmt.Println("=== ETH ===")
-	fmt.Printf("You have earned %.4f ETH from the Beacon Chain (including your commissions) so far.\n", rewards.BeaconRewards)
-	fmt.Printf("You have claimed %.4f ETH from the Smoothing Pool.\n", rewards.CumulativeEthRewards)
-	fmt.Printf("You still have %.4f ETH in unclaimed Smoothing Pool rewards.\n", rewards.UnclaimedEthRewards)
+	fmt.Printf("Your share of unskimmed Beacon Chain (CL) rewards is currently %.6f ETH.\n", rewards.BeaconRewards)
+	fmt.Printf("You have claimed %.6f ETH from the Smoothing Pool.\n", rewards.CumulativeEthRewards)
+	fmt.Printf("You still have %.6f ETH in unclaimed Smoothing Pool rewards.\n", rewards.UnclaimedEthRewards)
 
 	nextRewardsTime := rewards.LastCheckpoint.Add(rewards.RewardsInterval)
 	nextRewardsTimeString := cliutils.GetDateTimeString(uint64(nextRewardsTime.Unix()))
 	timeToCheckpointString := time.Until(nextRewardsTime).Round(time.Second).String()
 
-	// Assume 365 days in a year, 24 hours per day
-	rplApr := rewards.EstimatedRewards / rewards.TotalRplStake / rewards.RewardsInterval.Hours() * (24 * 365) * 100
+	// // Assume 365 days in a year, 24 hours per day
+	rplApr := 0.0
+	if rewards.TotalRplStake != 0 && rewards.RewardsInterval.Hours() != 0 {
+		rplApr = rewards.EstimatedRewards / rewards.TotalRplStake / rewards.RewardsInterval.Hours() * (24 * 365) * 100
+	}
 
 	fmt.Println("\n=== RPL ===")
 	fmt.Printf("The current rewards cycle started on %s.\n", cliutils.GetDateTimeString(uint64(rewards.LastCheckpoint.Unix())))
@@ -125,7 +139,7 @@ func getRewards(c *cli.Context) error {
 	}
 
 	fmt.Println()
-	fmt.Println("You may claim these rewards at any time. You no longer need to claim them within this interval.")
+	fmt.Println("You may claim these rewards at any time.")
 
 	// Return
 	return nil

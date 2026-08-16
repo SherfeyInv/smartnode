@@ -3,17 +3,16 @@ package security
 import (
 	"fmt"
 
-	"github.com/urfave/cli"
-
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
 )
 
-func join(c *cli.Context) error {
+func join(yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -36,13 +35,13 @@ func join(c *cli.Context) error {
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canJoin.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canJoin.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to join the security council?")) {
+	if prompt.Declined(yes, "Are you sure you want to join the security council?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}

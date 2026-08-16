@@ -12,11 +12,10 @@ type MevSelectionMode string
 type NimbusPruningMode string
 type PBSubmissionRef int
 
-// Enum to describe which container(s) a parameter impacts, so the Smartnode knows which
+// Enum to describe which container(s) a parameter impacts, so the Smart Node knows which
 // ones to restart upon a settings change
 const (
 	ContainerID_Unknown      ContainerID = ""
-	ContainerID_Api          ContainerID = "api"
 	ContainerID_Node         ContainerID = "node"
 	ContainerID_Watchtower   ContainerID = "watchtower"
 	ContainerID_Eth1         ContainerID = "eth1"
@@ -27,6 +26,7 @@ const (
 	ContainerID_Alertmanager ContainerID = "alertmanager"
 	ContainerID_Exporter     ContainerID = "exporter"
 	ContainerID_MevBoost     ContainerID = "mev-boost"
+	ContainerID_CommitBoost  ContainerID = "commit-boost"
 )
 
 // Enum to describe which network the system is on
@@ -35,7 +35,7 @@ const (
 	Network_All     Network = "all"
 	Network_Mainnet Network = "mainnet"
 	Network_Devnet  Network = "devnet"
-	Network_Holesky Network = "holesky"
+	Network_Testnet Network = "testnet"
 )
 
 // Enum to describe the mode for a client - local (Docker Mode) or external (Hybrid Mode)
@@ -43,6 +43,18 @@ const (
 	Mode_Unknown  Mode = ""
 	Mode_Local    Mode = "local"
 	Mode_External Mode = "external"
+)
+
+// Enum to describe the mode for a client - local (Docker Mode) or external (Hybrid Mode)
+const (
+	PruningMode_HistoryExpiry        Mode = "historyExpiry"
+	PruningMode_RollingHistoryExpiry Mode = "rollingHistoryExpiry"
+	PruningMode_FullNode             Mode = "fullNode"
+	PruningMode_Archive              Mode = "archive"
+
+	// RollingHistoryBlockRetention is about one year of post-merge slots
+	// (82125 epochs * 32 slots)
+	RollingHistoryBlockRetention uint64 = 2628000
 )
 
 // Enum to describe which data type a parameter's value will have, which
@@ -95,11 +107,12 @@ const (
 	MevRelayID_BloxrouteEthical   MevRelayID = "bloxrouteEthical"
 	MevRelayID_BloxrouteMaxProfit MevRelayID = "bloxrouteMaxProfit"
 	MevRelayID_BloxrouteRegulated MevRelayID = "bloxrouteRegulated"
-	MevRelayID_Eden               MevRelayID = "eden"
 	MevRelayID_Ultrasound         MevRelayID = "ultrasound"
+	MevRelayID_UltrasoundFiltered MevRelayID = "ultrasoundFiltered"
 	MevRelayID_Aestus             MevRelayID = "aestus"
 	MevRelayID_TitanGlobal        MevRelayID = "titanGlobal"
 	MevRelayID_TitanRegional      MevRelayID = "titanRegional"
+	MevRelayID_BTCSOfac           MevRelayID = "btcsOfac"
 )
 
 // Enum to describe MEV-Boost relay selection mode
@@ -134,6 +147,7 @@ type LocalConsensusConfig interface {
 // Interface for External Consensus configurations
 type ExternalConsensusConfig interface {
 	GetApiUrl() string
+	GetSuggestedBlockGasLimit() string
 }
 
 // A setting that has changed
@@ -144,11 +158,20 @@ type ChangedSetting struct {
 	AffectedContainers map[ContainerID]bool
 }
 
+type UrlMap map[Network]string
+
+func (urlMap UrlMap) UrlExists(network Network) bool {
+	if url, exists := urlMap[network]; exists && url != "" {
+		return true
+	}
+	return false
+}
+
 // A MEV relay
 type MevRelay struct {
 	ID          MevRelayID
 	Name        string
 	Description string
-	Urls        map[Network]string
+	Urls        UrlMap
 	Regulated   bool
 }

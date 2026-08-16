@@ -3,16 +3,15 @@ package node
 import (
 	"encoding/hex"
 	"fmt"
-	_ "time/tzdata"
 
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
+	hexutils "github.com/rocket-pool/smartnode/shared/hex"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	hexutils "github.com/rocket-pool/smartnode/shared/utils/hex"
 )
 
-func signMessage(c *cli.Context, message string) (*api.NodeSignResponse, error) {
+func signMessage(c *cli.Command, message string) (*api.NodeSignResponse, error) {
 	w, err := services.GetWallet(c)
 	if err != nil {
 		return nil, err

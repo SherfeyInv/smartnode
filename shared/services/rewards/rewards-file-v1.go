@@ -8,28 +8,38 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/goccy/go-json"
-	"github.com/rocket-pool/rocketpool-go/types"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
 	"github.com/wealdtech/go-merkletree"
 	"github.com/wealdtech/go-merkletree/keccak256"
+
+	"github.com/rocket-pool/smartnode/bindings/types"
+	"github.com/rocket-pool/smartnode/shared/math"
 )
 
-// Holds information
 type MinipoolPerformanceFile_v1 struct {
-	Index               uint64                                                  `json:"index"`
-	Network             string                                                  `json:"network"`
-	StartTime           time.Time                                               `json:"startTime,omitempty"`
-	EndTime             time.Time                                               `json:"endTime,omitempty"`
-	ConsensusStartBlock uint64                                                  `json:"consensusStartBlock,omitempty"`
-	ConsensusEndBlock   uint64                                                  `json:"consensusEndBlock,omitempty"`
-	ExecutionStartBlock uint64                                                  `json:"executionStartBlock,omitempty"`
-	ExecutionEndBlock   uint64                                                  `json:"executionEndBlock,omitempty"`
-	MinipoolPerformance map[common.Address]*SmoothingPoolMinipoolPerformance_v1 `json:"minipoolPerformance"`
+	Index               uint64                                     `json:"index"`
+	Network             string                                     `json:"network"`
+	StartTime           time.Time                                  `json:"startTime,omitempty"`
+	EndTime             time.Time                                  `json:"endTime,omitempty"`
+	ConsensusStartBlock uint64                                     `json:"consensusStartBlock,omitempty"`
+	ConsensusEndBlock   uint64                                     `json:"consensusEndBlock,omitempty"`
+	ExecutionStartBlock uint64                                     `json:"executionStartBlock,omitempty"`
+	ExecutionEndBlock   uint64                                     `json:"executionEndBlock,omitempty"`
+	MinipoolPerformance map[common.Address]*MinipoolPerformance_v1 `json:"minipoolPerformance"`
 }
+
+// Type assertion to implement IPerformanceFile
+var _ IPerformanceFile = (*MinipoolPerformanceFile_v1)(nil)
+
+// Type assertion to implement IRewardsFile
+var _ IRewardsFile = (*RewardsFile_v1)(nil)
 
 // Serialize a minipool performance file into bytes
 func (f *MinipoolPerformanceFile_v1) Serialize() ([]byte, error) {
 	return json.Marshal(f)
+}
+
+func (f *MinipoolPerformanceFile_v1) SerializeSSZ() ([]byte, error) {
+	return nil, fmt.Errorf("ssz format not implemented for minipool performance files")
 }
 
 // Serialize a minipool performance file into bytes designed for human readability
@@ -54,14 +64,26 @@ func (f *MinipoolPerformanceFile_v1) GetMinipoolAddresses() []common.Address {
 	return addresses
 }
 
+func (f *MinipoolPerformanceFile_v1) GetMegapoolAddresses() []common.Address {
+	return nil
+}
+
+func (f *MinipoolPerformanceFile_v1) GetMegapoolPerformance(megapoolAddress common.Address, pubkey types.ValidatorPubkey) (ISmoothingPoolPerformance, bool) {
+	return nil, false
+}
+
+func (f *MinipoolPerformanceFile_v1) GetMegapoolValidatorPubkeys(megapoolAddress common.Address) ([]types.ValidatorPubkey, error) {
+	return nil, nil
+}
+
 // Get a minipool's smoothing pool performance if it was present
-func (f *MinipoolPerformanceFile_v1) GetSmoothingPoolPerformance(minipoolAddress common.Address) (ISmoothingPoolMinipoolPerformance, bool) {
+func (f *MinipoolPerformanceFile_v1) GetMinipoolPerformance(minipoolAddress common.Address) (ISmoothingPoolPerformance, bool) {
 	perf, exists := f.MinipoolPerformance[minipoolAddress]
 	return perf, exists
 }
 
 // Minipool stats
-type SmoothingPoolMinipoolPerformance_v1 struct {
+type MinipoolPerformance_v1 struct {
 	Pubkey                  string   `json:"pubkey"`
 	StartSlot               uint64   `json:"startSlot,omitempty"`
 	EndSlot                 uint64   `json:"endSlot,omitempty"`
@@ -73,20 +95,35 @@ type SmoothingPoolMinipoolPerformance_v1 struct {
 	EthEarned               float64  `json:"ethEarned"`
 }
 
-func (p *SmoothingPoolMinipoolPerformance_v1) GetPubkey() (types.ValidatorPubkey, error) {
+// Type assertion to implement ISmoothingPoolPerformance
+var _ ISmoothingPoolPerformance = (*MinipoolPerformance_v1)(nil)
+
+func (p *MinipoolPerformance_v1) GetPubkey() (types.ValidatorPubkey, error) {
 	return types.HexToValidatorPubkey(p.Pubkey)
 }
-func (p *SmoothingPoolMinipoolPerformance_v1) GetSuccessfulAttestationCount() uint64 {
+func (p *MinipoolPerformance_v1) GetSuccessfulAttestationCount() uint64 {
 	return p.SuccessfulAttestations
 }
-func (p *SmoothingPoolMinipoolPerformance_v1) GetMissedAttestationCount() uint64 {
+func (p *MinipoolPerformance_v1) GetMissedAttestationCount() uint64 {
 	return p.MissedAttestations
 }
-func (p *SmoothingPoolMinipoolPerformance_v1) GetMissingAttestationSlots() []uint64 {
+func (p *MinipoolPerformance_v1) GetMissingAttestationSlots() []uint64 {
 	return p.MissingAttestationSlots
 }
-func (p *SmoothingPoolMinipoolPerformance_v1) GetEthEarned() *big.Int {
-	return eth.EthToWei(p.EthEarned)
+func (p *MinipoolPerformance_v1) GetEthEarned() *big.Int {
+	return math.EthToWei(p.EthEarned)
+}
+func (p *MinipoolPerformance_v1) GetBonusEthEarned() *big.Int {
+	return big.NewInt(0)
+}
+func (p *MinipoolPerformance_v1) GetEffectiveCommission() *big.Int {
+	return big.NewInt(0)
+}
+func (p *MinipoolPerformance_v1) GetConsensusIncome() *big.Int {
+	return big.NewInt(0)
+}
+func (p *MinipoolPerformance_v1) GetAttestationScore() *big.Int {
+	return big.NewInt(0)
 }
 
 // Node operator rewards
@@ -100,21 +137,13 @@ type NodeRewardsInfo_v1 struct {
 	MerkleProof                  []string      `json:"merkleProof"`
 }
 
-func (i *NodeRewardsInfo_v1) GetRewardNetwork() uint64 {
-	return i.RewardNetwork
-}
-func (i *NodeRewardsInfo_v1) GetCollateralRpl() *QuotedBigInt {
-	return i.CollateralRpl
-}
-func (i *NodeRewardsInfo_v1) GetOracleDaoRpl() *QuotedBigInt {
-	return i.OracleDaoRpl
-}
-func (i *NodeRewardsInfo_v1) GetSmoothingPoolEth() *QuotedBigInt {
-	return i.SmoothingPoolEth
-}
-func (n *NodeRewardsInfo_v1) GetMerkleProof() ([]common.Hash, error) {
-	proof := []common.Hash{}
-	for _, proofLevel := range n.MerkleProof {
+func (f *RewardsFile_v1) GetMerkleProof(addr common.Address) ([]common.Hash, error) {
+	nr, ok := f.getNodeRewardsInfo(addr)
+	if !ok {
+		return nil, nil
+	}
+	proof := make([]common.Hash, 0, len(nr.MerkleProof))
+	for _, proofLevel := range nr.MerkleProof {
 		proof = append(proof, common.HexToHash(proofLevel))
 	}
 	return proof, nil
@@ -132,14 +161,108 @@ func (f *RewardsFile_v1) Serialize() ([]byte, error) {
 	return json.Marshal(f)
 }
 
+func (f *RewardsFile_v1) SerializeSSZ() ([]byte, error) {
+	return nil, fmt.Errorf("ssz format not implemented for rewards file v1")
+}
+
 // Deserialize a rewards file from bytes
 func (f *RewardsFile_v1) Deserialize(bytes []byte) error {
 	return json.Unmarshal(bytes, &f)
 }
 
-// Get the rewards file's header
-func (f *RewardsFile_v1) GetHeader() *RewardsFileHeader {
-	return f.RewardsFileHeader
+// Get the rewards file version
+func (f *RewardsFile_v1) GetRewardsFileVersion() uint64 {
+	return rewardsFileVersionOne
+}
+
+// Get the rewards file index
+func (f *RewardsFile_v1) GetIndex() uint64 {
+	return f.Index
+}
+
+// Get the TotalNodeWeight (only added in v3)
+func (f *RewardsFile_v1) GetTotalNodeWeight() *big.Int {
+	return nil
+}
+
+// Get the merkle root
+func (f *RewardsFile_v1) GetMerkleRoot() string {
+	return f.MerkleRoot
+}
+
+// Get network rewards for a specific network
+func (f *RewardsFile_v1) GetNetworkRewards(network uint64) *NetworkRewardsInfo {
+	return f.NetworkRewards[network]
+}
+
+// Get the number of intervals that have passed
+func (f *RewardsFile_v1) GetIntervalsPassed() uint64 {
+	return f.IntervalsPassed
+}
+
+// Get the total RPL sent to the pDAO
+func (f *RewardsFile_v1) GetTotalProtocolDaoRpl() *big.Int {
+	return &f.TotalRewards.ProtocolDaoRpl.Int
+}
+
+// Get the total Eth sent to the pDAO
+func (f *RewardsFile_v1) GetTotalProtocolDaoEth() *big.Int {
+	return big.NewInt(0)
+}
+
+// Get the total RPL sent to the pDAO
+func (f *RewardsFile_v1) GetTotalOracleDaoRpl() *big.Int {
+	return &f.TotalRewards.TotalOracleDaoRpl.Int
+}
+
+// Get the total Eth sent to pool stakers from the SP
+func (f *RewardsFile_v1) GetTotalPoolStakerSmoothingPoolEth() *big.Int {
+	return &f.TotalRewards.PoolStakerSmoothingPoolEth.Int
+}
+
+// Get the total SP balance
+func (f *RewardsFile_v1) GetTotalSmoothingPoolBalance() *big.Int {
+	return &f.TotalRewards.TotalSmoothingPoolEth.Int
+}
+
+// Get the total rpl sent to stakers
+func (f *RewardsFile_v1) GetTotalCollateralRpl() *big.Int {
+	return &f.TotalRewards.TotalCollateralRpl.Int
+}
+
+// Get the total smoothing pool eth sent to node operators
+func (f *RewardsFile_v1) GetTotalNodeOperatorSmoothingPoolEth() *big.Int {
+	return &f.TotalRewards.NodeOperatorSmoothingPoolEth.Int
+}
+
+// Get The execution start block
+func (f *RewardsFile_v1) GetExecutionStartBlock() uint64 {
+	return f.ExecutionStartBlock
+}
+
+// Get The consensus start block
+func (f *RewardsFile_v1) GetConsensusStartBlock() uint64 {
+	return f.ConsensusStartBlock
+}
+
+// Get The execution end block
+func (f *RewardsFile_v1) GetExecutionEndBlock() uint64 {
+	return f.ExecutionEndBlock
+}
+
+// Get The consensus end block
+func (f *RewardsFile_v1) GetConsensusEndBlock() uint64 {
+	return f.ConsensusEndBlock
+}
+
+// Get the start time
+func (f *RewardsFile_v1) GetStartTime() time.Time {
+	return f.StartTime
+}
+
+// Get the end time
+func (f *RewardsFile_v1) GetEndTime() time.Time {
+	return f.EndTime
 }
 
 // Get all of the node addresses with rewards in this file
@@ -154,15 +277,79 @@ func (f *RewardsFile_v1) GetNodeAddresses() []common.Address {
 	return addresses
 }
 
-// Get info about a node's rewards
-func (f *RewardsFile_v1) GetNodeRewardsInfo(address common.Address) (INodeRewardsInfo, bool) {
+func (f *RewardsFile_v1) getNodeRewardsInfo(address common.Address) (*NodeRewardsInfo_v1, bool) {
 	rewards, exists := f.NodeRewards[address]
 	return rewards, exists
 }
 
-// Gets the minipool performance file corresponding to this rewards file
-func (f *RewardsFile_v1) GetMinipoolPerformanceFile() IMinipoolPerformanceFile {
-	return &f.MinipoolPerformanceFile
+func (f *RewardsFile_v1) HasRewardsFor(addr common.Address) bool {
+	_, ok := f.NodeRewards[addr]
+	return ok
+}
+
+func (f *RewardsFile_v1) GetNodeCollateralRpl(addr common.Address) *big.Int {
+	nr, ok := f.NodeRewards[addr]
+	if !ok {
+		return big.NewInt(0)
+	}
+	return &nr.CollateralRpl.Int
+}
+
+func (f *RewardsFile_v1) GetNodeOracleDaoRpl(addr common.Address) *big.Int {
+	nr, ok := f.NodeRewards[addr]
+	if !ok {
+		return big.NewInt(0)
+	}
+	return &nr.OracleDaoRpl.Int
+}
+
+func (f *RewardsFile_v1) GetNodeSmoothingPoolEth(addr common.Address) *big.Int {
+	nr, ok := f.NodeRewards[addr]
+	if !ok {
+		return big.NewInt(0)
+	}
+	return &nr.SmoothingPoolEth.Int
+}
+
+func (f *RewardsFile_v1) GetNodeVoterShareEth(addr common.Address) *big.Int {
+	return big.NewInt(0)
+}
+
+func (f *RewardsFile_v1) GetNodeEth(addr common.Address) *big.Int {
+	return f.GetNodeSmoothingPoolEth(addr)
+}
+
+// Getters for network info
+func (f *RewardsFile_v1) HasRewardsForNetwork(network uint64) bool {
+	_, ok := f.NetworkRewards[network]
+	return ok
+}
+
+func (f *RewardsFile_v1) GetNetworkCollateralRpl(network uint64) *big.Int {
+	nr, ok := f.NetworkRewards[network]
+	if !ok {
+		return big.NewInt(0)
+	}
+
+	return &nr.CollateralRpl.Int
+}
+
+func (f *RewardsFile_v1) GetNetworkOracleDaoRpl(network uint64) *big.Int {
+	nr, ok := f.NetworkRewards[network]
+	if !ok {
+		return big.NewInt(0)
+	}
+
+	return &nr.OracleDaoRpl.Int
+}
+
+func (f *RewardsFile_v1) GetNetworkSmoothingPoolEth(network uint64) *big.Int {
+	nr, ok := f.NetworkRewards[network]
+	if !ok {
+		return big.NewInt(0)
+	}
+
+	return &nr.SmoothingPoolEth.Int
 }
 
 // Sets the CID of the minipool performance file corresponding to this rewards file
@@ -171,7 +358,7 @@ func (f *RewardsFile_v1) SetMinipoolPerformanceFileCID(cid string) {
 }
 
 // Generates a merkle tree from the provided rewards map
-func (f *RewardsFile_v1) generateMerkleTree() error {
+func (f *RewardsFile_v1) GenerateMerkleTree() error {
 	// Generate the leaf data for each node
 	totalData := make([][]byte, 0, len(f.NodeRewards))
 	for address, rewardsForNode := range f.NodeRewards {

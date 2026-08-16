@@ -3,18 +3,17 @@ package node
 import (
 	"fmt"
 
-	"github.com/urfave/cli"
-
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
 )
 
-func initializeFeeDistributor(c *cli.Context) error {
+func initializeFeeDistributor(yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -30,7 +29,11 @@ func initializeFeeDistributor(c *cli.Context) error {
 		return nil
 	}
 
-	fmt.Println("This will create the \"fee distributor\" contract for your node, which captures priority fees and MEV after the merge for you.\n\nNOTE: you don't need to create the contract in order to be given those rewards - you only need it to *claim* those rewards to your withdrawal address.\nThe rewards can accumulate without initializing the contract.\nTherefore, we recommend you wait until the network's gas cost is low to initialize it.")
+	fmt.Println("This will create the \"fee distributor\" contract for your node, which captures priority fees and MEV after the merge for you.")
+	fmt.Println()
+	fmt.Println("NOTE: you don't need to create the contract in order to be given those rewards - you only need it to *claim* those rewards to your withdrawal address.")
+	fmt.Println("The rewards can accumulate without initializing the contract.")
+	fmt.Println("Therefore, we recommend you wait until the network's gas cost is low to initialize it.")
 
 	// Get the gas estimate
 	gasResponse, err := rp.GetInitializeFeeDistributorGas()
@@ -39,7 +42,7 @@ func initializeFeeDistributor(c *cli.Context) error {
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(gasResponse.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(gasResponse.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
@@ -47,7 +50,7 @@ func initializeFeeDistributor(c *cli.Context) error {
 	fmt.Printf("Your node's fee distributor contract will be created at address %s.\n", gasResponse.Distributor.Hex())
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to initialize your fee distributor contract?")) {
+	if prompt.Declined(yes, "Are you sure you want to initialize your fee distributor contract?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -70,10 +73,10 @@ func initializeFeeDistributor(c *cli.Context) error {
 
 }
 
-func distribute(c *cli.Context) error {
+func distribute(yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -95,7 +98,7 @@ func distribute(c *cli.Context) error {
 		return err
 	}
 
-	balance := eth.WeiToEth(canDistributeResponse.Balance)
+	balance := math.WeiToEth(canDistributeResponse.Balance)
 	if balance == 0 {
 		fmt.Printf("Your fee distributor does not have any ETH.")
 		return nil
@@ -108,13 +111,13 @@ func distribute(c *cli.Context) error {
 	fmt.Printf("\trETH pool stakers will receive %.6f ETH.\n\n", rEthShare)
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canDistributeResponse.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canDistributeResponse.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to distribute the ETH from your node's fee distributor?")) {
+	if prompt.Declined(yes, "Are you sure you want to distribute the ETH from your node's fee distributor?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}

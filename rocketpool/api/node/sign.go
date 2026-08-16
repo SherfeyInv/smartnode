@@ -3,16 +3,16 @@ package node
 import (
 	"encoding/hex"
 	"fmt"
-	_ "time/tzdata"
+	_ "time/tzdata" // Must be imported somewhere for the embedded tz data to load
 
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
+	hexutils "github.com/rocket-pool/smartnode/shared/hex"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	hexutils "github.com/rocket-pool/smartnode/shared/utils/hex"
 )
 
-func sign(c *cli.Context, serializedTx string) (*api.NodeSignResponse, error) {
+func sign(c *cli.Command, serializedTx string) (*api.NodeSignResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {

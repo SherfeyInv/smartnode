@@ -5,28 +5,34 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/goccy/go-json"
+	"github.com/prysmaticlabs/go-bitfield"
 	"github.com/prysmaticlabs/prysm/v5/crypto/bls"
-	"github.com/rocket-pool/rocketpool-go/types"
 	eth2types "github.com/wealdtech/go-eth2-types/v2"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/rocket-pool/smartnode/bindings/types"
+
+	hexutil "github.com/rocket-pool/smartnode/shared/hex"
 	"github.com/rocket-pool/smartnode/shared/services/beacon"
-	"github.com/rocket-pool/smartnode/shared/utils/eth2"
-	hexutil "github.com/rocket-pool/smartnode/shared/utils/hex"
 )
 
 // Config
 const (
-	RequestUrlFormat   = "%s%s"
-	RequestContentType = "application/json"
+	RequestUrlFormat               = "%s%s"
+	RequestJsonContentType         = "application/json"
+	RequestSSZContentType          = "application/octet-stream"
+	ResponseConsensusVersionHeader = "Eth-Consensus-Version"
 
 	RequestSyncStatusPath                  = "/eth/v1/node/syncing"
 	RequestEth2ConfigPath                  = "/eth/v1/config/spec"
@@ -36,10 +42,12 @@ const (
 	RequestFinalityCheckpointsPath         = "/eth/v1/beacon/states/%s/finality_checkpoints"
 	RequestForkPath                        = "/eth/v1/beacon/states/%s/fork"
 	RequestValidatorsPath                  = "/eth/v1/beacon/states/%s/validators"
+	RequestValidatorBalancesPath           = "/eth/v1/beacon/states/%s/validator_balances"
 	RequestVoluntaryExitPath               = "/eth/v1/beacon/pool/voluntary_exits"
 	RequestAttestationsPath                = "/eth/v1/beacon/blocks/%s/attestations"
 	RequestBeaconBlockPath                 = "/eth/v2/beacon/blocks/%s"
 	RequestBeaconBlockHeaderPath           = "/eth/v1/beacon/headers/%s"
+	RequestBeaconStatePath                 = "/eth/v2/debug/beacon/states/%d"
 	RequestValidatorSyncDuties             = "/eth/v1/validator/duties/sync/%s"
 	RequestValidatorProposerDuties         = "/eth/v1/validator/duties/proposer/%s"
 	RequestWithdrawalCredentialsChangePath = "/eth/v1/beacon/pool/bls_to_execution_changes"
@@ -90,8 +98,17 @@ func (c *StandardHttpClient) GetSyncStatus() (beacon.SyncStatus, error) {
 
 }
 
+var eth2ConfigCache atomic.Pointer[beacon.Eth2Config]
+
 // Get the eth2 config
+// cache it for future requests
 func (c *StandardHttpClient) GetEth2Config() (beacon.Eth2Config, error) {
+
+	// Check the cache
+	cached := eth2ConfigCache.Load()
+	if cached != nil {
+		return *cached, nil
+	}
 
 	// Data
 	var wg errgroup.Group
@@ -117,8 +134,17 @@ func (c *StandardHttpClient) GetEth2Config() (beacon.Eth2Config, error) {
 		return beacon.Eth2Config{}, err
 	}
 
-	// Return response
-	return beacon.Eth2Config{
+	// Save the result
+	shardCommitteePeriod := uint64(eth2Config.Data.ShardCommitteePeriod)
+	if shardCommitteePeriod == 0 {
+		shardCommitteePeriod = 256
+	}
+	// A CL that predates Gloas omits GLOAS_FORK_EPOCH from the spec
+	gloasForkEpoch := beacon.FarFutureEpoch
+	if eth2Config.Data.GloasForkEpoch != nil {
+		gloasForkEpoch = uint64(*eth2Config.Data.GloasForkEpoch)
+	}
+	out := beacon.Eth2Config{
 		GenesisForkVersion:           genesis.Data.GenesisForkVersion,
 		GenesisValidatorsRoot:        genesis.Data.GenesisValidatorsRoot,
 		GenesisEpoch:                 0,
@@ -127,8 +153,13 @@ func (c *StandardHttpClient) GetEth2Config() (beacon.Eth2Config, error) {
 		SlotsPerEpoch:                uint64(eth2Config.Data.SlotsPerEpoch),
 		SecondsPerEpoch:              uint64(eth2Config.Data.SecondsPerSlot * eth2Config.Data.SlotsPerEpoch),
 		EpochsPerSyncCommitteePeriod: uint64(eth2Config.Data.EpochsPerSyncCommitteePeriod),
-	}, nil
+		ShardCommitteePeriod:         shardCommitteePeriod,
+		GloasForkEpoch:               gloasForkEpoch,
+	}
+	eth2ConfigCache.Store(&out)
 
+	// Return
+	return out, nil
 }
 
 // Get the eth2 deposit contract info
@@ -176,7 +207,7 @@ func (c *StandardHttpClient) GetBeaconHead() (beacon.BeaconHead, error) {
 
 	// Return response
 	return beacon.BeaconHead{
-		Epoch:                  eth2.EpochAt(eth2Config, uint64(time.Now().Unix())),
+		Epoch:                  eth2Config.EpochAt(time.Now()),
 		FinalizedEpoch:         uint64(finalityCheckpoints.Data.Finalized.Epoch),
 		JustifiedEpoch:         uint64(finalityCheckpoints.Data.CurrentJustified.Epoch),
 		PreviousJustifiedEpoch: uint64(finalityCheckpoints.Data.PreviousJustified.Epoch),
@@ -229,6 +260,114 @@ func (c *StandardHttpClient) getValidatorStatus(pubkeyOrIndex string, opts *beac
 		Exists:                     true,
 	}, nil
 
+}
+
+// Get multiple validators' balances
+func (c *StandardHttpClient) GetValidatorBalances(indices []string, opts *beacon.ValidatorStatusOptions) (map[string]*big.Int, error) {
+
+	// Get state ID
+	var stateId string
+	if opts == nil {
+		stateId = "head"
+	} else if opts.Slot != nil {
+		stateId = strconv.FormatInt(int64(*opts.Slot), 10)
+	} else if opts.Epoch != nil {
+
+		// Get eth2 config
+		eth2Config, err := c.getEth2Config()
+		if err != nil {
+			return nil, err
+		}
+
+		// Get slot nuimber
+		slot := *opts.Epoch * uint64(eth2Config.Data.SlotsPerEpoch)
+		stateId = strconv.FormatInt(int64(slot), 10)
+
+	} else {
+		return nil, fmt.Errorf("must specify a slot or epoch when calling getValidatorsByOpts")
+	}
+
+	count := len(indices)
+	data := make(map[string]*big.Int, count)
+	for i := 0; i < count; i += MaxRequestValidatorsCount {
+		i := i
+		m := i + MaxRequestValidatorsCount
+		if m > count {
+			m = count
+		}
+
+		// Get & add validators
+		batch := indices[i:m]
+		balances, err := c.getValidatorBalances(stateId, batch)
+		if err != nil {
+			return nil, fmt.Errorf("error getting validator balances: %w", err)
+		}
+		for _, balance := range balances.Data {
+			b, ok := big.NewInt(0).SetString(balance.Balance, 10)
+			if !ok {
+				return nil, fmt.Errorf("invalid balance: %s", balance.Balance)
+			}
+			// Beacon clients return Gwei, but we want wei
+			b.Mul(b, big.NewInt(1e9))
+
+			data[balance.Index] = b
+		}
+	}
+
+	// Return
+	return data, nil
+}
+
+// GetValidatorBalancesSafe returns the balances of the validators
+// In order to avoid thrashing the bn, when opts.Slot is provided,
+// we will preflight the balance query with a sync query, and ensure that the
+// bn has not entered optimistic sync due to being unable to provide forkchoice updates,
+// and that the current head is at a recent slot.
+func (c *StandardHttpClient) GetValidatorBalancesSafe(indices []string, opts *beacon.ValidatorStatusOptions) (map[string]*big.Int, error) {
+	// Filter out empty indices
+	indices = slices.DeleteFunc(indices, func(index string) bool {
+		return index == ""
+	})
+
+	beaconConfig, err := c.GetEth2Config()
+	if err != nil {
+		return nil, err
+	}
+	// Check the current head
+	safe := false
+	for i := 0; i < 30; i++ {
+		syncStatus, err := c.getSyncStatus()
+		if err != nil {
+			// If we get an error, wait and try again
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		if syncStatus.Data.IsSyncing {
+			// If the bn is still syncing, wait and try again
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		if syncStatus.Data.ELOffline {
+			// If the bn is offline, wait and try again
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		// Check that the head is no more than 2 slots behind the current time.
+		if beaconConfig.GetSlotTime(uint64(syncStatus.Data.HeadSlot)).Add(2 * time.Second * time.Duration(beaconConfig.SecondsPerSlot)).Before(time.Now()) {
+			// If the head is too far behind, wait and try again
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		safe = true
+		break
+	}
+	if !safe {
+		return nil, fmt.Errorf("bn is not in sync after 30 seconds")
+	}
+
+	// Get the balances
+	return c.GetValidatorBalances(indices, opts)
 }
 
 // Get multiple validators' statuses
@@ -313,6 +452,10 @@ func (c *StandardHttpClient) GetValidatorStatuses(pubkeys []types.ValidatorPubke
 
 // Get whether validators have sync duties to perform at given epoch
 func (c *StandardHttpClient) GetValidatorSyncDuties(indices []string, epoch uint64) (map[string]bool, error) {
+	// Return if there are no validators to check
+	if len(indices) == 0 {
+		return nil, nil
+	}
 
 	// Perform the post request
 	responseBody, status, err := c.postRequest(fmt.Sprintf(RequestValidatorSyncDuties, strconv.FormatUint(epoch, 10)), indices)
@@ -488,10 +631,18 @@ func (c *StandardHttpClient) GetAttestations(blockId string) ([]beacon.Attestati
 	for i, attestation := range attestations.Data {
 		bitString := hexutil.RemovePrefix(attestation.AggregationBits)
 		attestationInfo[i].SlotIndex = uint64(attestation.Data.Slot)
-		attestationInfo[i].CommitteeIndex = uint64(attestation.Data.Index)
 		attestationInfo[i].AggregationBits, err = hex.DecodeString(bitString)
 		if err != nil {
 			return nil, false, fmt.Errorf("Error decoding aggregation bits for attestation %d of block %s: %w", i, blockId, err)
+		}
+		if attestation.CommitteeBits != "" && attestation.CommitteeBits != "0x" {
+			attestationInfo[i].Committees, err = hex.DecodeString(hexutil.RemovePrefix(attestation.CommitteeBits))
+			if err != nil {
+				return nil, false, fmt.Errorf("Error decoding committee bits for attestation %d of block %s: %w", i, blockId, err)
+			}
+		} else {
+			attestationInfo[i].Committees = bitfield.NewBitvector64()
+			attestationInfo[i].Committees.SetBitAt(uint64(attestation.Data.Index), true)
 		}
 	}
 
@@ -512,27 +663,67 @@ func (c *StandardHttpClient) GetBeaconBlock(blockId string) (beacon.BeaconBlock,
 		ProposerIndex: block.Data.Message.ProposerIndex,
 	}
 
-	// Execution payload only exists after the merge, so check for its existence
-	if block.Data.Message.Body.ExecutionPayload == nil {
-		beaconBlock.HasExecutionPayload = false
-	} else {
+	// Pre-Gloas: execution payload is embedded in the block body.
+	// Gloas (EIP-7732 ePBS): payload is uncoupled; the body only carries a
+	// signed_execution_payload_bid with fee_recipient + block_hash.
+	executionPayload := block.Data.Message.Body.ExecutionPayload
+	payloadBid := block.Data.Message.Body.SignedExecutionPayloadBid
+	if executionPayload != nil {
 		beaconBlock.HasExecutionPayload = true
-		beaconBlock.FeeRecipient = common.BytesToAddress(block.Data.Message.Body.ExecutionPayload.FeeRecipient)
-		beaconBlock.ExecutionBlockNumber = uint64(block.Data.Message.Body.ExecutionPayload.BlockNumber)
+		beaconBlock.FeeRecipient = common.BytesToAddress(executionPayload.FeeRecipient)
+		beaconBlock.ExecutionBlockNumber = uint64(executionPayload.BlockNumber)
+	} else if payloadBid != nil && payloadBid.Message != nil {
+		beaconBlock.HasExecutionPayload = true
+		beaconBlock.FeeRecipient = common.BytesToAddress(payloadBid.Message.FeeRecipient)
+		if len(payloadBid.Message.BlockHash) > 0 {
+			beaconBlock.ExecutionBlockHash = common.BytesToHash(payloadBid.Message.BlockHash)
+		}
+	} else {
+		beaconBlock.HasExecutionPayload = false
 	}
 
 	// Add attestation info
+	beaconBlock.Attestations = make([]beacon.AttestationInfo, 0, len(block.Data.Message.Body.Attestations))
 	for i, attestation := range block.Data.Message.Body.Attestations {
 		bitString := hexutil.RemovePrefix(attestation.AggregationBits)
 		info := beacon.AttestationInfo{
-			SlotIndex:      uint64(attestation.Data.Slot),
-			CommitteeIndex: uint64(attestation.Data.Index),
+			SlotIndex: uint64(attestation.Data.Slot),
 		}
 		info.AggregationBits, err = hex.DecodeString(bitString)
 		if err != nil {
 			return beacon.BeaconBlock{}, false, fmt.Errorf("Error decoding aggregation bits for attestation %d of block %s: %w", i, blockId, err)
 		}
+		if attestation.CommitteeBits != "" && attestation.CommitteeBits != "0x" {
+			info.Committees, err = hex.DecodeString(hexutil.RemovePrefix(attestation.CommitteeBits))
+			if err != nil {
+				return beacon.BeaconBlock{}, false, fmt.Errorf("Error decoding committee bits for attestation %d of block %s: %w", i, blockId, err)
+			}
+		} else {
+			info.Committees = bitfield.NewBitvector64()
+			info.Committees.SetBitAt(uint64(attestation.Data.Index), true)
+		}
 		beaconBlock.Attestations = append(beaconBlock.Attestations, info)
+	}
+
+	// Withdrawals only exist on the embedded execution payload (pre-Gloas).
+	// Gloas withdrawals live on the EL block / beacon state expected_withdrawals.
+	if executionPayload != nil {
+		beaconBlock.Withdrawals = make([]beacon.WithdrawalInfo, 0, len(executionPayload.Withdrawals))
+		for _, withdrawal := range executionPayload.Withdrawals {
+			amount, ok := new(big.Int).SetString(withdrawal.Amount, 10)
+			if !ok {
+				return beacon.BeaconBlock{}, false, fmt.Errorf("Error decoding withdrawal amount for withdrawal for address %s of block %s: %s", withdrawal.Address, blockId, withdrawal.Amount)
+			}
+			// amount is in Gwei, but we want wei
+			amount.Mul(amount, big.NewInt(1e9))
+			beaconBlock.Withdrawals = append(beaconBlock.Withdrawals, beacon.WithdrawalInfo{
+				ValidatorIndex: withdrawal.ValidatorIndex,
+				Address:        common.BytesToAddress(withdrawal.Address),
+				Amount:         amount,
+			})
+		}
+	} else {
+		beaconBlock.Withdrawals = []beacon.WithdrawalInfo{}
 	}
 
 	return beaconBlock, true, nil
@@ -656,29 +847,36 @@ func (c *StandardHttpClient) getFinalityCheckpoints(stateId string) (FinalityChe
 	return finalityCheckpoints, nil
 }
 
-// Get fork
-func (c *StandardHttpClient) getFork(stateId string) (ForkResponse, error) {
-	responseBody, status, err := c.getRequest(fmt.Sprintf(RequestForkPath, stateId))
+// Get validator balances
+func (c *StandardHttpClient) getValidatorBalances(stateId string, indices []string) (ValidatorBalancesResponse, error) {
+	var query string
+	if len(indices) > 0 {
+		query = fmt.Sprintf("?id=%s", strings.Join(indices, ","))
+	}
+	responseBody, status, err := c.getRequest(fmt.Sprintf(RequestValidatorBalancesPath, stateId) + query)
 	if err != nil {
-		return ForkResponse{}, fmt.Errorf("Could not get fork data: %w", err)
+		return ValidatorBalancesResponse{}, fmt.Errorf("Could not get validator balances: %w", err)
 	}
 	if status != http.StatusOK {
-		return ForkResponse{}, fmt.Errorf("Could not get fork data: HTTP status %d; response body: '%s'", status, string(responseBody))
+		return ValidatorBalancesResponse{}, fmt.Errorf("Could not get validator balances: HTTP status %d; response body: '%s'", status, string(responseBody))
 	}
-	var fork ForkResponse
-	if err := json.Unmarshal(responseBody, &fork); err != nil {
-		return ForkResponse{}, fmt.Errorf("Could not decode fork data: %w", err)
+	var balances ValidatorBalancesResponse
+	if err := json.Unmarshal(responseBody, &balances); err != nil {
+		return ValidatorBalancesResponse{}, fmt.Errorf("Could not decode validator balances: %w", err)
 	}
-	return fork, nil
+	return balances, nil
 }
 
 // Get validators
 func (c *StandardHttpClient) getValidators(stateId string, pubkeys []string) (ValidatorsResponse, error) {
-	var query string
-	if len(pubkeys) > 0 {
-		query = fmt.Sprintf("?id=%s", strings.Join(pubkeys, ","))
+
+	// Build the post body matching the Beacon API spec:
+	// { "ids": ["pubkey1", "pubkey2", ...], "statuses": [] }
+	postBody := map[string][]string{
+		"ids":      pubkeys,
+		"statuses": []string{},
 	}
-	responseBody, status, err := c.getRequest(fmt.Sprintf(RequestValidatorsPath, stateId) + query)
+	responseBody, status, err := c.postRequest(fmt.Sprintf(RequestValidatorsPath, stateId), postBody)
 	if err != nil {
 		return ValidatorsResponse{}, fmt.Errorf("Could not get validators: %w", err)
 	}
@@ -690,6 +888,36 @@ func (c *StandardHttpClient) getValidators(stateId string, pubkeys []string) (Va
 		return ValidatorsResponse{}, fmt.Errorf("Could not decode validators: %w", err)
 	}
 	return validators, nil
+}
+
+func (c *StandardHttpClient) GetAllValidators() ([]beacon.ValidatorStatus, error) {
+	response, err := c.getValidators("finalized", []string{})
+	if err != nil {
+		return []beacon.ValidatorStatus{}, fmt.Errorf("Could not get all validators: %w", err)
+	}
+
+	validators := make([]beacon.ValidatorStatus, len(response.Data))
+	for i, validator := range response.Data {
+
+		// Add status
+		validators[i] = beacon.ValidatorStatus{
+			Pubkey:                     types.BytesToValidatorPubkey(validator.Validator.Pubkey),
+			Index:                      validator.Index,
+			WithdrawalCredentials:      common.BytesToHash(validator.Validator.WithdrawalCredentials),
+			Balance:                    uint64(validator.Balance),
+			EffectiveBalance:           uint64(validator.Validator.EffectiveBalance),
+			Status:                     beacon.ValidatorState(validator.Status),
+			Slashed:                    validator.Validator.Slashed,
+			ActivationEligibilityEpoch: uint64(validator.Validator.ActivationEligibilityEpoch),
+			ActivationEpoch:            uint64(validator.Validator.ActivationEpoch),
+			ExitEpoch:                  uint64(validator.Validator.ExitEpoch),
+			WithdrawableEpoch:          uint64(validator.Validator.WithdrawableEpoch),
+			Exists:                     true,
+		}
+
+	}
+	return validators, nil
+
 }
 
 // Get validators by pubkeys and status options
@@ -709,7 +937,7 @@ func (c *StandardHttpClient) getValidatorsByOpts(pubkeysOrIndices []string, opts
 			return ValidatorsResponse{}, err
 		}
 
-		// Get slot nuimber
+		// Get slot number
 		slot := *opts.Epoch * uint64(eth2Config.Data.SlotsPerEpoch)
 		stateId = strconv.FormatInt(int64(slot), 10)
 
@@ -724,14 +952,14 @@ func (c *StandardHttpClient) getValidatorsByOpts(pubkeysOrIndices []string, opts
 	wg.SetLimit(threadLimit)
 	for i := 0; i < count; i += MaxRequestValidatorsCount {
 		i := i
-		max := i + MaxRequestValidatorsCount
-		if max > count {
-			max = count
+		m := i + MaxRequestValidatorsCount
+		if m > count {
+			m = count
 		}
 
 		wg.Go(func() error {
 			// Get & add validators
-			batch := pubkeysOrIndices[i:max]
+			batch := pubkeysOrIndices[i:m]
 			validators, err := c.getValidators(stateId, batch)
 			if err != nil {
 				return fmt.Errorf("error getting validator statuses: %w", err)
@@ -792,7 +1020,7 @@ func (c *StandardHttpClient) getAttestations(blockId string) (AttestationsRespon
 
 // Get the target beacon block
 func (c *StandardHttpClient) getBeaconBlock(blockId string) (BeaconBlockResponse, bool, error) {
-	responseBody, status, err := c.getRequest(fmt.Sprintf(RequestBeaconBlockPath, blockId))
+	responseBody, status, err := c.getRequest(fmt.Sprintf(RequestBeaconBlockPath, fmt.Sprint(blockId)))
 	if err != nil {
 		return BeaconBlockResponse{}, false, fmt.Errorf("Could not get beacon block data: %w", err)
 	}
@@ -807,6 +1035,50 @@ func (c *StandardHttpClient) getBeaconBlock(blockId string) (BeaconBlockResponse
 		return BeaconBlockResponse{}, false, fmt.Errorf("Could not decode beacon block data: %w", err)
 	}
 	return beaconBlock, true, nil
+}
+
+// Get the Beacon state for a slot
+func (c *StandardHttpClient) GetBeaconStateSSZ(slot uint64) (*beacon.BeaconStateSSZ, error) {
+	response, err := c.sszRequest(fmt.Sprintf(RequestBeaconStatePath, slot))
+	if err != nil {
+		return nil, fmt.Errorf("Could not get beacon state data: %w", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		responseBody, err := io.ReadAll(response.Body)
+		if err != nil {
+			return nil, fmt.Errorf("Could not get beacon state data: HTTP status %d; response body: '%s'", response.StatusCode, string(responseBody))
+		}
+		return nil, fmt.Errorf("Could not get beacon state data: HTTP status %d", response.StatusCode)
+	}
+
+	return &beacon.BeaconStateSSZ{
+		Data: response.Body,
+		Size: response.ContentLength,
+		Fork: response.Header.Get(ResponseConsensusVersionHeader),
+	}, nil
+}
+
+func (c *StandardHttpClient) GetBeaconBlockSSZ(slot uint64) (*beacon.BeaconBlockSSZ, bool, error) {
+	response, err := c.sszRequest(fmt.Sprintf(RequestBeaconBlockPath, fmt.Sprint(slot)))
+	if err != nil {
+		return nil, false, fmt.Errorf("Could not get beacon block data: %w", err)
+	}
+	if response.StatusCode == http.StatusNotFound {
+		return nil, false, nil
+	}
+	if response.StatusCode != http.StatusOK {
+		responseBody, err := io.ReadAll(response.Body)
+		if err != nil {
+			return nil, false, fmt.Errorf("Could not get beacon block data: HTTP status %d; response body: '%s'", response.StatusCode, string(responseBody))
+		}
+		return nil, false, fmt.Errorf("Could not get beacon block data: HTTP status %d; response body: '%s'", response.StatusCode, string(responseBody))
+	}
+
+	return &beacon.BeaconBlockSSZ{
+		Data: response.Body,
+		Size: response.ContentLength,
+		Fork: response.Header.Get(ResponseConsensusVersionHeader),
+	}, true, nil
 }
 
 // Get the specified beacon block header
@@ -850,7 +1122,7 @@ func (c *committeesDecoder) Read(p []byte) (int, error) {
 	return n, err
 }
 
-var committeesDecoderPool sync.Pool = sync.Pool{
+var committeesDecoderPool = sync.Pool{
 	New: func() any {
 		var out committeesDecoder
 
@@ -913,9 +1185,21 @@ func (c *StandardHttpClient) postWithdrawalCredentialsChange(request BLSToExecut
 
 // Make a GET request but do not read its body yet (allows buffered decoding)
 func (c *StandardHttpClient) getRequestReader(requestPath string) (io.ReadCloser, int, error) {
+	return c.getRequestReaderWithContentType(requestPath, RequestJsonContentType)
+}
 
+// Make a GET request but do not read its body yet (allows buffered decoding)
+func (c *StandardHttpClient) getRequestReaderWithContentType(requestPath string, contentType string) (io.ReadCloser, int, error) {
 	// Send request
-	response, err := http.Get(fmt.Sprintf(RequestUrlFormat, c.providerAddress, requestPath))
+	request, err := http.NewRequest("GET", fmt.Sprintf(RequestUrlFormat, c.providerAddress, requestPath), nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	request.Header.Set("Accept", contentType)
+
+	client := http.Client{}
+
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -925,9 +1209,14 @@ func (c *StandardHttpClient) getRequestReader(requestPath string) (io.ReadCloser
 
 // Make a GET request to the beacon node and read the body of the response
 func (c *StandardHttpClient) getRequest(requestPath string) ([]byte, int, error) {
+	return c.getRequestWithContentType(requestPath, RequestJsonContentType)
+}
+
+// Make a GET request to the beacon node and read the body of the response
+func (c *StandardHttpClient) getRequestWithContentType(requestPath string, contentType string) ([]byte, int, error) {
 
 	// Send request
-	reader, status, err := c.getRequestReader(requestPath)
+	reader, status, err := c.getRequestReaderWithContentType(requestPath, contentType)
 	if err != nil {
 		return []byte{}, 0, err
 	}
@@ -945,6 +1234,19 @@ func (c *StandardHttpClient) getRequest(requestPath string) ([]byte, int, error)
 	return body, status, nil
 }
 
+func (c *StandardHttpClient) sszRequest(requestPath string) (*http.Response, error) {
+	request, err := http.NewRequest("GET", fmt.Sprintf(RequestUrlFormat, c.providerAddress, requestPath), nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", RequestSSZContentType)
+	// Disable transparent compression: a compressed response has no
+	// Content-Length, which would force the buffered (non-streaming) SSZ
+	// decode path
+	request.Header.Set("Accept-Encoding", "identity")
+	return http.DefaultClient.Do(request)
+}
+
 // Make a POST request to the beacon node
 func (c *StandardHttpClient) postRequest(requestPath string, requestBody interface{}) ([]byte, int, error) {
 
@@ -956,7 +1258,7 @@ func (c *StandardHttpClient) postRequest(requestPath string, requestBody interfa
 	requestBodyReader := bytes.NewReader(requestBodyBytes)
 
 	// Send request
-	response, err := http.Post(fmt.Sprintf(RequestUrlFormat, c.providerAddress, requestPath), RequestContentType, requestBodyReader)
+	response, err := http.Post(fmt.Sprintf(RequestUrlFormat, c.providerAddress, requestPath), RequestJsonContentType, requestBodyReader)
 	if err != nil {
 		return []byte{}, 0, err
 	}

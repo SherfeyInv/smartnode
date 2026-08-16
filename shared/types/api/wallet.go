@@ -1,10 +1,13 @@
 package api
 
 import (
+	"time"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/google/uuid"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/types"
+
+	"github.com/rocket-pool/smartnode/bindings/transactions/gaslimit"
+	"github.com/rocket-pool/smartnode/bindings/types"
 )
 
 // Encrypted validator keystore following the EIP-2335 standard
@@ -18,11 +21,17 @@ type ValidatorKeystore struct {
 }
 
 type WalletStatusResponse struct {
-	Status            string         `json:"status"`
-	Error             string         `json:"error"`
-	PasswordSet       bool           `json:"passwordSet"`
-	WalletInitialized bool           `json:"walletInitialized"`
-	AccountAddress    common.Address `json:"accountAddress"`
+	Status            string `json:"status"`
+	Error             string `json:"error"`
+	PasswordSet       bool   `json:"passwordSet"`
+	WalletInitialized bool   `json:"walletInitialized"`
+	// When masquerading, AccountAddress represents the masqueraded address.
+	// When using a normal wallet, AccountAddress represents the address derived from the wallet stored on disk
+	AccountAddress common.Address `json:"accountAddress"`
+	// NodeAddress always represents the address drived from the wallet stored on disk
+	NodeAddress    common.Address `json:"nodeAddress"`
+	IsMasquerading bool           `json:"isMasquerading"`
+	IsObserve      bool           `json:"isObserve"`
 }
 
 type SetPasswordResponse struct {
@@ -60,6 +69,23 @@ type RebuildWalletResponse struct {
 	ValidatorKeys []types.ValidatorPubkey `json:"validatorKeys"`
 }
 
+type KeyRecoveryStatus struct {
+	Running        bool      `json:"running"`
+	Operation      string    `json:"operation"`
+	StartedAt      time.Time `json:"startedAt"`
+	ElapsedSeconds float64   `json:"elapsedSeconds"`
+	KeysFound      int       `json:"keysFound"`
+	KeysTotal      int       `json:"keysTotal"`
+	// False until the daemon has finished working out how many keys this node has
+	TotalKnown bool `json:"totalKnown"`
+}
+
+type KeyRecoveryStatusResponse struct {
+	Status   string            `json:"status"`
+	Error    string            `json:"error"`
+	Recovery KeyRecoveryStatus `json:"recovery"`
+}
+
 type ExportWalletResponse struct {
 	Status            string `json:"status"`
 	Error             string `json:"error"`
@@ -69,12 +95,12 @@ type ExportWalletResponse struct {
 }
 
 type SetEnsNameResponse struct {
-	Status  string             `json:"status"`
-	Error   string             `json:"error"`
-	Address common.Address     `json:"address"`
-	EnsName string             `json:"ensName"`
-	TxHash  common.Hash        `json:"txHash"`
-	GasInfo rocketpool.GasInfo `json:"gasInfo"`
+	Status    string          `json:"status"`
+	Error     string          `json:"error"`
+	Address   common.Address  `json:"address"`
+	EnsName   string          `json:"ensName"`
+	TxHash    common.Hash     `json:"txHash"`
+	GasLimits gaslimit.Limits `json:"gasLimits"`
 }
 
 type TestMnemonicResponse struct {
@@ -85,6 +111,16 @@ type TestMnemonicResponse struct {
 }
 
 type PurgeResponse struct {
+	Status string `json:"status"`
+	Error  string `json:"error"`
+}
+
+type MasqueradeResponse struct {
+	Status string `json:"status"`
+	Error  string `json:"error"`
+}
+
+type EndMasqueradeResponse struct {
 	Status string `json:"status"`
 	Error  string `json:"error"`
 }

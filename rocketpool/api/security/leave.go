@@ -1,18 +1,18 @@
 package security
 
 import (
-	"fmt"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 
-	"github.com/rocket-pool/rocketpool-go/dao/security"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/security"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canLeave(c *cli.Context) (*api.SecurityCanLeaveResponse, error) {
+func canLeave(c *cli.Command) (*api.SecurityCanLeaveResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeSecurityMember(c); err != nil {
@@ -52,9 +52,9 @@ func canLeave(c *cli.Context) (*api.SecurityCanLeaveResponse, error) {
 		if err != nil {
 			return err
 		}
-		gasInfo, err := security.EstimateLeaveGas(rp, opts)
+		gasLimits, err := security.EstimateLeaveGas(rp, opts)
 		if err == nil {
-			response.GasInfo = gasInfo
+			response.GasLimits = gasLimits
 		}
 		return err
 	})
@@ -70,14 +70,10 @@ func canLeave(c *cli.Context) (*api.SecurityCanLeaveResponse, error) {
 
 }
 
-func leave(c *cli.Context) (*api.SecurityLeaveResponse, error) {
+func leave(c *cli.Command, opts *bind.TransactOpts) (*api.SecurityLeaveResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeSecurityMember(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -87,18 +83,6 @@ func leave(c *cli.Context) (*api.SecurityLeaveResponse, error) {
 
 	// Response
 	response := api.SecurityLeaveResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Leave
 	hash, err := security.Leave(rp, opts)

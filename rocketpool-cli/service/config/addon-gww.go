@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/rivo/tview"
+
 	"github.com/rocket-pool/smartnode/shared/services/config"
 	"github.com/rocket-pool/smartnode/shared/types/addons"
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
@@ -67,7 +68,7 @@ func (configPage *AddonGwwPage) createContent() {
 
 	// Set up the form items
 	configPage.enabledBox = createParameterizedCheckbox(enabledParam)
-	configPage.otherParams = createParameterizedFormItems(otherParams, configPage.layout.descriptionBox)
+	configPage.otherParams = createParameterizedFormItems(otherParams, configPage.layout)
 
 	// Map the parameters to the form items in the layout
 	configPage.layout.mapParameterizedFormItems(configPage.enabledBox)

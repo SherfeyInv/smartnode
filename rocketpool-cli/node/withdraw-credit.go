@@ -1,0 +1,112 @@
+package node
+
+import (
+	"fmt"
+	"math/big"
+	"strconv"
+
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
+	"github.com/rocket-pool/smartnode/shared/math"
+	"github.com/rocket-pool/smartnode/shared/services/gas"
+	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
+)
+
+func nodeWithdrawCredit(amount string, yes bool) error {
+
+	// Get RP client
+	rp, err := rocketpool.NewClient().WithReady()
+	if err != nil {
+		return err
+	}
+	defer rp.Close()
+
+	// Get node status
+	status, err := rp.NodeStatus()
+	if err != nil {
+		return err
+	}
+
+	if status.CreditBalance.Cmp(big.NewInt(0)) == 0 {
+		fmt.Println("You have no credit to withdraw.")
+		return nil
+	}
+
+	// Get withdrawal amount
+	var amountWei *big.Int
+	if amount == "max" {
+
+		// Set amount to maximum withdrawable amount
+		amountWei = status.CreditBalance
+
+	} else if amount != "" {
+
+		// Parse amount
+		withdrawalAmount, err := strconv.ParseFloat(amount, 64)
+		if err != nil {
+			return fmt.Errorf("Invalid withdrawal amount '%s': %w", amount, err)
+		}
+		amountWei = math.EthToWei(withdrawalAmount)
+
+	} else {
+
+		// Get maximum withdrawable amount
+		maxAmount := status.CreditBalance
+		// Prompt for maximum amount
+		if prompt.Confirm("You have %.6f ETH of credit that you can withdraw, receiving the equivalent amount in rETH on the node withdrawal address (%s).\n\n Would you like to withdraw the maximum amount of credit?", math.RoundDown(math.WeiToEth(maxAmount), 6), status.PrimaryWithdrawalAddress) {
+			amountWei = maxAmount
+		} else {
+
+			// Prompt for custom amount
+			inputAmount := prompt.Prompt("Please enter an amount of ETH credit to withdraw:", "^\\d+(\\.\\d+)?$", "Invalid amount")
+			withdrawalAmount, err := strconv.ParseFloat(inputAmount, 64)
+			if err != nil {
+				return fmt.Errorf("Invalid withdrawal amount '%s': %w", inputAmount, err)
+			}
+			amountWei = math.EthToWei(withdrawalAmount)
+
+		}
+
+	}
+
+	// Check credit can be withdrawn
+	canWithdraw, err := rp.CanNodeWithdrawCredit(amountWei)
+	if err != nil {
+		return err
+	}
+	if !canWithdraw.CanWithdraw {
+		fmt.Println("Cannot withdraw credit:")
+		if canWithdraw.InsufficientBalance {
+			fmt.Println("The node's credit balance is insufficient.")
+		}
+	}
+
+	// Assign max fees
+	err = gas.AssignMaxFeeAndLimit(canWithdraw.GasLimits, rp, yes)
+	if err != nil {
+		return err
+	}
+
+	// Prompt for confirmation
+	if prompt.Declined(yes, "Are you sure you want to withdraw %.6f of credit?", math.RoundDown(math.WeiToEth(amountWei), 6)) {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
+	// Withdraw ETH
+	response, err := rp.NodeWithdrawCredit(amountWei)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Withdrawing credit...\n")
+	cliutils.PrintTransactionHash(rp, response.TxHash)
+	if _, err = rp.WaitForTransaction(response.TxHash); err != nil {
+		return err
+	}
+
+	// Log & return
+	fmt.Printf("Successfully withdrew %.6f credit. The equivalent amount of rETH has been transferred to the node withdrawal address (%s).\n", math.RoundDown(math.WeiToEth(amountWei), 6), status.PrimaryWithdrawalAddress)
+	return nil
+
+}

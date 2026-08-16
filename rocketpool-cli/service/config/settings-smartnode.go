@@ -1,19 +1,18 @@
 package config
 
 import (
-	"github.com/gdamore/tcell/v2"
 	"github.com/rocket-pool/smartnode/shared/services/config"
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
 )
 
-// The page wrapper for the Smartnode config
+// The page wrapper for the Smart Node config
 type SmartnodeConfigPage struct {
 	home   *settingsHome
 	page   *page
 	layout *standardLayout
 }
 
-// Creates a new page for the Smartnode settings
+// Creates a new page for the Smart Node settings
 func NewSmartnodeConfigPage(home *settingsHome) *SmartnodeConfigPage {
 
 	configPage := &SmartnodeConfigPage{
@@ -24,8 +23,8 @@ func NewSmartnodeConfigPage(home *settingsHome) *SmartnodeConfigPage {
 	configPage.page = newPage(
 		home.homePage,
 		"settings-smartnode",
-		"Smartnode and TX Fees",
-		"Select this to configure the settings for the Smartnode itself, including the defaults and limits on transaction fees.",
+		"Smart Node and TX Fees",
+		"Select this to configure the settings for the Smart Node itself, including the defaults and limits on transaction fees.",
 		configPage.layout.grid,
 	)
 
@@ -38,36 +37,21 @@ func (configPage *SmartnodeConfigPage) getPage() *page {
 	return configPage.page
 }
 
-// Creates the content for the Smartnode settings page
+// Creates the content for the Smart Node settings page
 func (configPage *SmartnodeConfigPage) createContent() {
 
 	// Create the layout
 	masterConfig := configPage.home.md.Config
 	layout := newStandardLayout()
 	configPage.layout = layout
-	layout.createForm(&masterConfig.Smartnode.Network, "Smartnode and TX Fee Settings")
+	layout.createForm(&masterConfig.Smartnode.Network, "Smart Node and TX Fee Settings")
 
 	// Return to the home page after pressing Escape
-	layout.form.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc {
-			// Close all dropdowns and break if one was open
-			for _, param := range configPage.layout.parameters {
-				dropDown, ok := param.item.(*DropDown)
-				if ok && dropDown.open {
-					dropDown.CloseList(configPage.home.md.app)
-					return nil
-				}
-			}
-
-			// Return to the home page
-			configPage.home.md.setPage(configPage.home.homePage)
-			return nil
-		}
-		return event
-	})
+	layout.form.SetInputCapture(layout.getInputCapture(configPage.home.md, configPage.home.homePage))
 
 	// Set up the form items
-	formItems := createParameterizedFormItems(masterConfig.Smartnode.GetParameters(), layout.descriptionBox)
+	params := append(masterConfig.Smartnode.GetParameters(), &masterConfig.EnableIPv6, &masterConfig.Alertmanager.ShowAlertsOnCLI)
+	formItems := createParameterizedFormItems(params, layout)
 	for _, formItem := range formItems {
 		layout.form.AddFormItem(formItem.item)
 		layout.parameters[formItem.item] = formItem

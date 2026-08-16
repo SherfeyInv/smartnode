@@ -25,8 +25,14 @@ type ExternalLighthouseConfig struct {
 	// Custom proposal graffiti
 	Graffiti config.Parameter `yaml:"graffiti,omitempty"`
 
+	// The suggested block gas limit
+	SuggestedBlockGasLimit config.Parameter `yaml:"suggestedBlockGasLimit,omitempty"`
+
 	// Toggle for enabling doppelganger detection
 	DoppelgangerDetection config.Parameter `yaml:"doppelgangerDetection,omitempty"`
+
+	// The port to expose the Keymanager API on
+	KeymanagerApiPort config.Parameter `yaml:"keymanagerApiPort,omitempty"`
 
 	// The Docker Hub tag for Lighthouse
 	ContainerTag config.Parameter `yaml:"containerTag,omitempty"`
@@ -42,11 +48,17 @@ type ExternalLodestarConfig struct {
 	// The URL of the HTTP endpoint
 	HttpUrl config.Parameter `yaml:"httpUrl,omitempty"`
 
+	// The suggested block gas limit
+	SuggestedBlockGasLimit config.Parameter `yaml:"suggestedBlockGasLimit,omitempty"`
+
 	// Custom proposal graffiti
 	Graffiti config.Parameter `yaml:"graffiti,omitempty"`
 
 	// Toggle for enabling doppelganger detection
 	DoppelgangerDetection config.Parameter `yaml:"doppelgangerDetection,omitempty"`
+
+	// The port to expose the Keymanager API on
+	KeymanagerApiPort config.Parameter `yaml:"keymanagerApiPort,omitempty"`
 
 	// The Docker Hub tag for Lighthouse
 	ContainerTag config.Parameter `yaml:"containerTag,omitempty"`
@@ -62,11 +74,17 @@ type ExternalNimbusConfig struct {
 	// The URL of the HTTP endpoint
 	HttpUrl config.Parameter `yaml:"httpUrl,omitempty"`
 
+	// The suggested block gas limit
+	SuggestedBlockGasLimit config.Parameter `yaml:"suggestedBlockGasLimit,omitempty"`
+
 	// Custom proposal graffiti
 	Graffiti config.Parameter `yaml:"graffiti,omitempty"`
 
 	// Toggle for enabling doppelganger detection
 	DoppelgangerDetection config.Parameter `yaml:"doppelgangerDetection,omitempty"`
+
+	// The port to expose the Keymanager API on
+	KeymanagerApiPort config.Parameter `yaml:"keymanagerApiPort,omitempty"`
 
 	// The Docker Hub tag for Lighthouse
 	ContainerTag config.Parameter `yaml:"containerTag,omitempty"`
@@ -82,6 +100,9 @@ type ExternalPrysmConfig struct {
 	// The URL of the gRPC (REST) endpoint for the Beacon API
 	HttpUrl config.Parameter `yaml:"httpUrl,omitempty"`
 
+	// The suggested block gas limit
+	SuggestedBlockGasLimit config.Parameter `yaml:"suggestedBlockGasLimit,omitempty"`
+
 	// Custom proposal graffiti
 	Graffiti config.Parameter `yaml:"graffiti,omitempty"`
 
@@ -90,6 +111,9 @@ type ExternalPrysmConfig struct {
 
 	// The URL of the JSON-RPC endpoint for the Validator client
 	JsonRpcUrl config.Parameter `yaml:"jsonRpcUrl,omitempty"`
+
+	// The port to expose the Keymanager API on
+	KeymanagerApiPort config.Parameter `yaml:"keymanagerApiPort,omitempty"`
 
 	// The Docker Hub tag for Prysm's VC
 	ContainerTag config.Parameter `yaml:"containerTag,omitempty"`
@@ -108,6 +132,12 @@ type ExternalTekuConfig struct {
 	// Custom proposal graffiti
 	Graffiti config.Parameter `yaml:"graffiti,omitempty"`
 
+	// The suggested block gas limit
+	SuggestedBlockGasLimit config.Parameter `yaml:"suggestedBlockGasLimit,omitempty"`
+
+	// The port to expose the Keymanager API on
+	KeymanagerApiPort config.Parameter `yaml:"keymanagerApiPort,omitempty"`
+
 	// The Docker Hub tag for Teku
 	ContainerTag config.Parameter `yaml:"containerTag,omitempty"`
 
@@ -118,6 +148,13 @@ type ExternalTekuConfig struct {
 	DoppelgangerDetection config.Parameter `yaml:"doppelgangerDetection,omitempty"`
 }
 
+// Type assertions for all ExternalConsensusConfigs
+var _ config.ConsensusConfig = &ExternalLighthouseConfig{}
+var _ config.ConsensusConfig = &ExternalLodestarConfig{}
+var _ config.ConsensusConfig = &ExternalNimbusConfig{}
+var _ config.ConsensusConfig = &ExternalPrysmConfig{}
+var _ config.ConsensusConfig = &ExternalTekuConfig{}
+
 // Generates a new ExternalExecutionConfig configuration
 func NewExternalExecutionConfig(cfg *RocketPoolConfig) *ExternalExecutionConfig {
 	return &ExternalExecutionConfig{
@@ -126,10 +163,10 @@ func NewExternalExecutionConfig(cfg *RocketPoolConfig) *ExternalExecutionConfig 
 		HttpUrl: config.Parameter{
 			ID:                 "httpUrl",
 			Name:               "HTTP URL",
-			Description:        "The URL of the HTTP RPC endpoint for your external Execution client.\nNOTE: If you are running it on the same machine as the Smartnode, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead, for example 'http://192.168.1.100:8545'.",
+			Description:        "The URL of the HTTP RPC endpoint for your external Execution client.\nNOTE: If you are running it on the same machine as the Smart Node, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead, for example 'http://192.168.1.100:8545'.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Eth2, config.ContainerID_Node, config.ContainerID_Watchtower},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2, config.ContainerID_Node, config.ContainerID_Watchtower},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
@@ -137,10 +174,10 @@ func NewExternalExecutionConfig(cfg *RocketPoolConfig) *ExternalExecutionConfig 
 		WsUrl: config.Parameter{
 			ID:                 "wsUrl",
 			Name:               "Websocket URL",
-			Description:        "The URL of the Websocket RPC endpoint for your external Execution client.\nNOTE: If you are running it on the same machine as the Smartnode, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead, for example 'http://192.168.1.100:8546'.",
+			Description:        "The URL of the Websocket RPC endpoint for your external Execution client.\nNOTE: If you are running it on the same machine as the Smart Node, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead, for example 'http://192.168.1.100:8546'.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Eth2, config.ContainerID_Node, config.ContainerID_Watchtower},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2, config.ContainerID_Node, config.ContainerID_Watchtower},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
@@ -155,11 +192,22 @@ func NewExternalLighthouseConfig(cfg *RocketPoolConfig) *ExternalLighthouseConfi
 		HttpUrl: config.Parameter{
 			ID:                 "httpUrl",
 			Name:               "HTTP URL",
-			Description:        "The URL of the HTTP Beacon API endpoint for your external client.\nNOTE: If you are running it on the same machine as the Smartnode, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
+			Description:        "The URL of the HTTP Beacon API endpoint for your external client.\nNOTE: If you are running it on the same machine as the Smart Node, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1, config.ContainerID_Api, config.ContainerID_Validator, config.ContainerID_Watchtower, config.ContainerID_Node},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1, config.ContainerID_Validator, config.ContainerID_Watchtower, config.ContainerID_Node},
 			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
+		},
+
+		SuggestedBlockGasLimit: config.Parameter{
+			ID:                 "suggestedBlockGasLimit",
+			Name:               "Suggested Block Gas Limit",
+			Description:        "The block gas limit that should be used for externally built blocks. Leave blank to use the Consensus Client default.",
+			Type:               config.ParameterType_String,
+			Default:            map[config.Network]interface{}{config.Network_All: ""},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
+			CanBeBlank:         true,
 			OverwriteOnUpgrade: false,
 		},
 
@@ -194,7 +242,7 @@ func NewExternalLighthouseConfig(cfg *RocketPoolConfig) *ExternalLighthouseConfi
 			Default: map[config.Network]interface{}{
 				config.Network_Mainnet: lighthouseTagPortableProd,
 				config.Network_Devnet:  lighthouseTagPortableTest,
-				config.Network_Holesky: lighthouseTagPortableTest,
+				config.Network_Testnet: lighthouseTagPortableTest,
 			},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
 			CanBeBlank:         false,
@@ -204,11 +252,22 @@ func NewExternalLighthouseConfig(cfg *RocketPoolConfig) *ExternalLighthouseConfi
 		AdditionalVcFlags: config.Parameter{
 			ID:                 "additionalVcFlags",
 			Name:               "Additional Validator Client Flags",
-			Description:        "Additional custom command line flags you want to pass Lighthouse's Validator Client, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass Lighthouse's Validator Client, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
 			CanBeBlank:         true,
+			OverwriteOnUpgrade: false,
+		},
+
+		KeymanagerApiPort: config.Parameter{
+			ID:                 KeymanagerApiPortID,
+			Name:               "Keymanager API Port",
+			Description:        "The port your validator client should run its Keymanager API on.",
+			Type:               config.ParameterType_Uint16,
+			Default:            map[config.Network]interface{}{config.Network_All: defaultKeymanagerApiPort},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
+			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
 	}
@@ -222,11 +281,22 @@ func NewExternalLodestarConfig(cfg *RocketPoolConfig) *ExternalLodestarConfig {
 		HttpUrl: config.Parameter{
 			ID:                 "httpUrl",
 			Name:               "HTTP URL",
-			Description:        "The URL of the HTTP Beacon API endpoint for your external client.\nNOTE: If you are running it on the same machine as the Smartnode, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
+			Description:        "The URL of the HTTP Beacon API endpoint for your external client.\nNOTE: If you are running it on the same machine as the Smart Node, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1, config.ContainerID_Api, config.ContainerID_Validator, config.ContainerID_Watchtower, config.ContainerID_Node},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1, config.ContainerID_Validator, config.ContainerID_Watchtower, config.ContainerID_Node},
 			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
+		},
+
+		SuggestedBlockGasLimit: config.Parameter{
+			ID:                 "suggestedBlockGasLimit",
+			Name:               "Suggested Block Gas Limit",
+			Description:        "The block gas limit that should be used for externally built blocks. Leave blank to use the Consensus Client default.",
+			Type:               config.ParameterType_String,
+			Default:            map[config.Network]interface{}{config.Network_All: ""},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
+			CanBeBlank:         true,
 			OverwriteOnUpgrade: false,
 		},
 
@@ -261,7 +331,7 @@ func NewExternalLodestarConfig(cfg *RocketPoolConfig) *ExternalLodestarConfig {
 			Default: map[config.Network]interface{}{
 				config.Network_Mainnet: lodestarTagProd,
 				config.Network_Devnet:  lodestarTagTest,
-				config.Network_Holesky: lodestarTagTest,
+				config.Network_Testnet: lodestarTagTest,
 			},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
 			CanBeBlank:         false,
@@ -271,11 +341,22 @@ func NewExternalLodestarConfig(cfg *RocketPoolConfig) *ExternalLodestarConfig {
 		AdditionalVcFlags: config.Parameter{
 			ID:                 "additionalVcFlags",
 			Name:               "Additional Validator Client Flags",
-			Description:        "Additional custom command line flags you want to pass Lodestar's Validator Client, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass Lodestar's Validator Client, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
 			CanBeBlank:         true,
+			OverwriteOnUpgrade: false,
+		},
+
+		KeymanagerApiPort: config.Parameter{
+			ID:                 KeymanagerApiPortID,
+			Name:               "Keymanager API Port",
+			Description:        "The port your validator client should run its Keymanager API on.",
+			Type:               config.ParameterType_Uint16,
+			Default:            map[config.Network]interface{}{config.Network_All: defaultKeymanagerApiPort},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
+			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
 	}
@@ -290,11 +371,22 @@ func NewExternalNimbusConfig(cfg *RocketPoolConfig) *ExternalNimbusConfig {
 		HttpUrl: config.Parameter{
 			ID:                 "httpUrl",
 			Name:               "HTTP URL",
-			Description:        "The URL of the HTTP Beacon API endpoint for your external client.\nNOTE: If you are running it on the same machine as the Smartnode, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
+			Description:        "The URL of the HTTP Beacon API endpoint for your external client.\nNOTE: If you are running it on the same machine as the Smart Node, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1, config.ContainerID_Api, config.ContainerID_Validator, config.ContainerID_Watchtower, config.ContainerID_Node},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1, config.ContainerID_Validator, config.ContainerID_Watchtower, config.ContainerID_Node},
 			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
+		},
+
+		SuggestedBlockGasLimit: config.Parameter{
+			ID:                 "suggestedBlockGasLimit",
+			Name:               "Suggested Block Gas Limit",
+			Description:        "The block gas limit that should be used for externally built blocks. Leave blank to use the Consensus Client default.",
+			Type:               config.ParameterType_String,
+			Default:            map[config.Network]interface{}{config.Network_All: ""},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
+			CanBeBlank:         true,
 			OverwriteOnUpgrade: false,
 		},
 
@@ -329,7 +421,7 @@ func NewExternalNimbusConfig(cfg *RocketPoolConfig) *ExternalNimbusConfig {
 			Default: map[config.Network]interface{}{
 				config.Network_Mainnet: nimbusVcTagProd,
 				config.Network_Devnet:  nimbusVcTagTest,
-				config.Network_Holesky: nimbusVcTagTest,
+				config.Network_Testnet: nimbusVcTagTest,
 			},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
 			CanBeBlank:         false,
@@ -339,11 +431,22 @@ func NewExternalNimbusConfig(cfg *RocketPoolConfig) *ExternalNimbusConfig {
 		AdditionalVcFlags: config.Parameter{
 			ID:                 "additionalVcFlags",
 			Name:               "Additional Validator Client Flags",
-			Description:        "Additional custom command line flags you want to pass Nimbus's Validator Client, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass Nimbus's Validator Client, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
 			CanBeBlank:         true,
+			OverwriteOnUpgrade: false,
+		},
+
+		KeymanagerApiPort: config.Parameter{
+			ID:                 KeymanagerApiPortID,
+			Name:               "Keymanager API Port",
+			Description:        "The port your validator client should run its Keymanager API on.",
+			Type:               config.ParameterType_Uint16,
+			Default:            map[config.Network]interface{}{config.Network_All: defaultKeymanagerApiPort},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
+			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
 	}
@@ -357,10 +460,10 @@ func NewExternalPrysmConfig(cfg *RocketPoolConfig) *ExternalPrysmConfig {
 		HttpUrl: config.Parameter{
 			ID:                 "httpUrl",
 			Name:               "HTTP URL",
-			Description:        "The URL of the HTTP Beacon API endpoint for your external client.\nNOTE: If you are running it on the same machine as the Smartnode, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
+			Description:        "The URL of the HTTP Beacon API endpoint for your external client.\nNOTE: If you are running it on the same machine as the Smart Node, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1, config.ContainerID_Api, config.ContainerID_Validator, config.ContainerID_Watchtower, config.ContainerID_Node},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1, config.ContainerID_Validator, config.ContainerID_Watchtower, config.ContainerID_Node},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
@@ -368,11 +471,22 @@ func NewExternalPrysmConfig(cfg *RocketPoolConfig) *ExternalPrysmConfig {
 		JsonRpcUrl: config.Parameter{
 			ID:                 "jsonRpcUrl",
 			Name:               "gRPC URL",
-			Description:        "The URL of the gRPC API endpoint for your external client. Prysm's validator client will need this in order to connect to it.\nNOTE: If you are running it on the same machine as the Smartnode, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
+			Description:        "The URL of the gRPC API endpoint for your external client. Prysm's validator client will need this in order to connect to it.\nNOTE: If you are running it on the same machine as the Smart Node, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
 			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
+		},
+
+		SuggestedBlockGasLimit: config.Parameter{
+			ID:                 "suggestedBlockGasLimit",
+			Name:               "Suggested Block Gas Limit",
+			Description:        "The block gas limit that should be used for externally built blocks. Leave blank to use the Consensus Client default.",
+			Type:               config.ParameterType_String,
+			Default:            map[config.Network]interface{}{config.Network_All: ""},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
+			CanBeBlank:         true,
 			OverwriteOnUpgrade: false,
 		},
 
@@ -407,7 +521,7 @@ func NewExternalPrysmConfig(cfg *RocketPoolConfig) *ExternalPrysmConfig {
 			Default: map[config.Network]interface{}{
 				config.Network_Mainnet: prysmVcProd,
 				config.Network_Devnet:  prysmVcTest,
-				config.Network_Holesky: prysmVcTest,
+				config.Network_Testnet: prysmVcTest,
 			},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
 			CanBeBlank:         false,
@@ -417,11 +531,22 @@ func NewExternalPrysmConfig(cfg *RocketPoolConfig) *ExternalPrysmConfig {
 		AdditionalVcFlags: config.Parameter{
 			ID:                 "additionalVcFlags",
 			Name:               "Additional Validator Client Flags",
-			Description:        "Additional custom command line flags you want to pass Prysm's Validator Client, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass Prysm's Validator Client, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
 			CanBeBlank:         true,
+			OverwriteOnUpgrade: false,
+		},
+
+		KeymanagerApiPort: config.Parameter{
+			ID:                 KeymanagerApiPortID,
+			Name:               "Keymanager API Port",
+			Description:        "The port your validator client should run its Keymanager API on.",
+			Type:               config.ParameterType_Uint16,
+			Default:            map[config.Network]interface{}{config.Network_All: defaultKeymanagerApiPort},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
+			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
 	}
@@ -435,11 +560,22 @@ func NewExternalTekuConfig(cfg *RocketPoolConfig) *ExternalTekuConfig {
 		HttpUrl: config.Parameter{
 			ID:                 "httpUrl",
 			Name:               "HTTP URL",
-			Description:        "The URL of the HTTP Beacon API endpoint for your external client.\nNOTE: If you are running it on the same machine as the Smartnode, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
+			Description:        "The URL of the HTTP Beacon API endpoint for your external client.\nNOTE: If you are running it on the same machine as the Smart Node, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1, config.ContainerID_Api, config.ContainerID_Validator, config.ContainerID_Watchtower, config.ContainerID_Node},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1, config.ContainerID_Validator, config.ContainerID_Watchtower, config.ContainerID_Node},
 			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
+		},
+
+		SuggestedBlockGasLimit: config.Parameter{
+			ID:                 "suggestedBlockGasLimit",
+			Name:               "Suggested Block Gas Limit",
+			Description:        "The block gas limit that should be used for externally built blocks. Leave blank to use the Consensus Client default.",
+			Type:               config.ParameterType_String,
+			Default:            map[config.Network]interface{}{config.Network_All: ""},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
+			CanBeBlank:         true,
 			OverwriteOnUpgrade: false,
 		},
 
@@ -474,7 +610,7 @@ func NewExternalTekuConfig(cfg *RocketPoolConfig) *ExternalTekuConfig {
 			Default: map[config.Network]interface{}{
 				config.Network_Mainnet: tekuTagProd,
 				config.Network_Devnet:  tekuTagTest,
-				config.Network_Holesky: tekuTagTest,
+				config.Network_Testnet: tekuTagTest,
 			},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
 			CanBeBlank:         false,
@@ -484,11 +620,22 @@ func NewExternalTekuConfig(cfg *RocketPoolConfig) *ExternalTekuConfig {
 		AdditionalVcFlags: config.Parameter{
 			ID:                 "additionalVcFlags",
 			Name:               "Additional Validator Client Flags",
-			Description:        "Additional custom command line flags you want to pass Teku's Validator Client, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass Teku's Validator Client, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
 			CanBeBlank:         true,
+			OverwriteOnUpgrade: false,
+		},
+
+		KeymanagerApiPort: config.Parameter{
+			ID:                 KeymanagerApiPortID,
+			Name:               "Keymanager API Port",
+			Description:        "The port your validator client should run its Keymanager API on.",
+			Type:               config.ParameterType_Uint16,
+			Default:            map[config.Network]interface{}{config.Network_All: defaultKeymanagerApiPort},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
+			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
 	}
@@ -506,8 +653,10 @@ func (cfg *ExternalExecutionConfig) GetParameters() []*config.Parameter {
 func (cfg *ExternalLighthouseConfig) GetParameters() []*config.Parameter {
 	return []*config.Parameter{
 		&cfg.HttpUrl,
+		&cfg.SuggestedBlockGasLimit,
 		&cfg.Graffiti,
 		&cfg.DoppelgangerDetection,
+		&cfg.KeymanagerApiPort,
 		&cfg.ContainerTag,
 		&cfg.AdditionalVcFlags,
 	}
@@ -517,8 +666,10 @@ func (cfg *ExternalLighthouseConfig) GetParameters() []*config.Parameter {
 func (cfg *ExternalNimbusConfig) GetParameters() []*config.Parameter {
 	return []*config.Parameter{
 		&cfg.HttpUrl,
+		&cfg.SuggestedBlockGasLimit,
 		&cfg.Graffiti,
 		&cfg.DoppelgangerDetection,
+		&cfg.KeymanagerApiPort,
 		&cfg.ContainerTag,
 		&cfg.AdditionalVcFlags,
 	}
@@ -528,8 +679,10 @@ func (cfg *ExternalNimbusConfig) GetParameters() []*config.Parameter {
 func (cfg *ExternalLodestarConfig) GetParameters() []*config.Parameter {
 	return []*config.Parameter{
 		&cfg.HttpUrl,
+		&cfg.SuggestedBlockGasLimit,
 		&cfg.Graffiti,
 		&cfg.DoppelgangerDetection,
+		&cfg.KeymanagerApiPort,
 		&cfg.ContainerTag,
 		&cfg.AdditionalVcFlags,
 	}
@@ -540,8 +693,10 @@ func (cfg *ExternalPrysmConfig) GetParameters() []*config.Parameter {
 	return []*config.Parameter{
 		&cfg.HttpUrl,
 		&cfg.JsonRpcUrl,
+		&cfg.SuggestedBlockGasLimit,
 		&cfg.Graffiti,
 		&cfg.DoppelgangerDetection,
+		&cfg.KeymanagerApiPort,
 		&cfg.ContainerTag,
 		&cfg.AdditionalVcFlags,
 	}
@@ -551,8 +706,10 @@ func (cfg *ExternalPrysmConfig) GetParameters() []*config.Parameter {
 func (cfg *ExternalTekuConfig) GetParameters() []*config.Parameter {
 	return []*config.Parameter{
 		&cfg.HttpUrl,
+		&cfg.SuggestedBlockGasLimit,
 		&cfg.Graffiti,
 		&cfg.DoppelgangerDetection,
+		&cfg.KeymanagerApiPort,
 		&cfg.ContainerTag,
 		&cfg.AdditionalVcFlags,
 	}
@@ -633,6 +790,40 @@ func (cfg *ExternalTekuConfig) GetApiUrl() string {
 	return cfg.HttpUrl.Value.(string)
 }
 
+func (cfg *ExternalLighthouseConfig) GetSuggestedBlockGasLimit() string {
+	if cfg.SuggestedBlockGasLimit.Value == nil {
+		return ""
+	}
+	return cfg.SuggestedBlockGasLimit.Value.(string)
+}
+func (cfg *ExternalTekuConfig) GetSuggestedBlockGasLimit() string {
+	if cfg.SuggestedBlockGasLimit.Value == nil {
+		return ""
+	}
+	return cfg.SuggestedBlockGasLimit.Value.(string)
+}
+
+func (cfg *ExternalLodestarConfig) GetSuggestedBlockGasLimit() string {
+	if cfg.SuggestedBlockGasLimit.Value == nil {
+		return ""
+	}
+	return cfg.SuggestedBlockGasLimit.Value.(string)
+}
+
+func (cfg *ExternalNimbusConfig) GetSuggestedBlockGasLimit() string {
+	if cfg.SuggestedBlockGasLimit.Value == nil {
+		return ""
+	}
+	return cfg.SuggestedBlockGasLimit.Value.(string)
+}
+
+func (cfg *ExternalPrysmConfig) GetSuggestedBlockGasLimit() string {
+	if cfg.SuggestedBlockGasLimit.Value == nil {
+		return ""
+	}
+	return cfg.SuggestedBlockGasLimit.Value.(string)
+}
+
 // Get the doppelganger detection from the config
 func (cfg *ExternalLighthouseConfig) GetDoppelgangerDetection() bool {
 	return cfg.DoppelgangerDetection.Value.(bool)
@@ -663,32 +854,32 @@ func (cfg *ExternalTekuConfig) GetName() string {
 	return "Teku"
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *ExternalExecutionConfig) GetConfigTitle() string {
 	return cfg.Title
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *ExternalLighthouseConfig) GetConfigTitle() string {
 	return cfg.Title
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *ExternalLodestarConfig) GetConfigTitle() string {
 	return cfg.Title
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *ExternalNimbusConfig) GetConfigTitle() string {
 	return cfg.Title
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *ExternalPrysmConfig) GetConfigTitle() string {
 	return cfg.Title
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *ExternalTekuConfig) GetConfigTitle() string {
 	return cfg.Title
 }

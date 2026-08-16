@@ -6,8 +6,8 @@ import (
 
 // Constants
 const (
-	besuTagTest          string = "hyperledger/besu:24.7.1"
-	besuTagProd          string = "hyperledger/besu:24.7.1"
+	besuTagTest          string = "hyperledger/besu:26.7.1"
+	besuTagProd          string = "hyperledger/besu:26.7.1"
 	besuEventLogInterval int    = 1000
 	besuMaxPeers         uint16 = 25
 	besuStopSignal       string = "SIGTERM"
@@ -34,9 +34,6 @@ type BesuConfig struct {
 
 	// Historical state block regeneration limit
 	MaxBackLayers config.Parameter `yaml:"maxBackLayers,omitempty"`
-
-	// The archive mode flag
-	ArchiveMode config.Parameter `yaml:"archiveMode,omitempty"`
 
 	// The Docker Hub tag for Besu
 	ContainerTag config.Parameter `yaml:"containerTag,omitempty"`
@@ -95,17 +92,6 @@ func NewBesuConfig(cfg *RocketPoolConfig) *BesuConfig {
 			OverwriteOnUpgrade: false,
 		},
 
-		ArchiveMode: config.Parameter{
-			ID:                 "archiveMode",
-			Name:               "Enable Archive Mode",
-			Description:        "When enabled, Besu will run in \"archive\" mode which means it can recreate the state of the Beacon chain for a previous block. This is required for manually generating the Merkle rewards tree.\n\nIf you are sure you will never be manually generating a tree, you can disable archive mode.",
-			Type:               config.ParameterType_Bool,
-			Default:            map[config.Network]interface{}{config.Network_All: false},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2},
-			CanBeBlank:         false,
-			OverwriteOnUpgrade: false,
-		},
-
 		ContainerTag: config.Parameter{
 			ID:          "containerTag",
 			Name:        "Container Tag",
@@ -114,7 +100,7 @@ func NewBesuConfig(cfg *RocketPoolConfig) *BesuConfig {
 			Default: map[config.Network]interface{}{
 				config.Network_Mainnet: besuTagProd,
 				config.Network_Devnet:  besuTagTest,
-				config.Network_Holesky: besuTagTest,
+				config.Network_Testnet: besuTagTest,
 			},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
 			CanBeBlank:         false,
@@ -124,7 +110,7 @@ func NewBesuConfig(cfg *RocketPoolConfig) *BesuConfig {
 		AdditionalFlags: config.Parameter{
 			ID:                 "additionalFlags",
 			Name:               "Additional Flags",
-			Description:        "Additional custom command line flags you want to pass to Besu, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass to Besu, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
@@ -140,13 +126,12 @@ func (cfg *BesuConfig) GetParameters() []*config.Parameter {
 		&cfg.JvmHeapSize,
 		&cfg.MaxPeers,
 		&cfg.MaxBackLayers,
-		&cfg.ArchiveMode,
 		&cfg.ContainerTag,
 		&cfg.AdditionalFlags,
 	}
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *BesuConfig) GetConfigTitle() string {
 	return cfg.Title
 }

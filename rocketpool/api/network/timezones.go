@@ -4,14 +4,15 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/rocket-pool/rocketpool-go/node"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/node"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
 )
 
-func getTimezones(c *cli.Context) (*api.NetworkTimezonesResponse, error) {
+func getTimezones(c *cli.Command) (*api.NetworkTimezonesResponse, error) {
 
 	// Get services
 	if err := services.RequireRocketStorage(c); err != nil {

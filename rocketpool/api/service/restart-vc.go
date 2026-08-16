@@ -3,14 +3,15 @@ package service
 import (
 	"fmt"
 
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/rocketpool/validator"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/validator"
-	"github.com/urfave/cli"
 )
 
 // Restarts the Validator client
-func restartVc(c *cli.Context) (*api.RestartVcResponse, error) {
+func restartVc(c *cli.Command) (*api.RestartVcResponse, error) {
 
 	// Get services
 	bc, err := services.GetBeaconClient(c)

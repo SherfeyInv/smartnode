@@ -3,18 +3,18 @@ package security
 import (
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/settings/protocol"
-	"github.com/rocket-pool/rocketpool-go/settings/security"
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/settings/protocol"
+	"github.com/rocket-pool/smartnode/bindings/settings/security"
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
-	"github.com/urfave/cli"
 )
 
-func canProposeSetting(c *cli.Context, contractName string, settingName string, value string) (*api.SecurityCanProposeSettingResponse, error) {
+func canProposeSetting(c *cli.Command, contractName string, settingName string, value string) (*api.SecurityCanProposeSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -52,7 +52,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = security.EstimateProposeCreateLotEnabledGas(rp, newValue, opts)
+			response.GasLimits, err = security.EstimateProposeCreateLotEnabledGas(rp, newValue, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing CreateLotEnabled: %w", err)
 			}
@@ -63,7 +63,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = security.EstimateProposeBidOnLotEnabledGas(rp, newValue, opts)
+			response.GasLimits, err = security.EstimateProposeBidOnLotEnabledGas(rp, newValue, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing BidOnLotEnabled: %w", err)
 			}
@@ -77,7 +77,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = security.EstimateProposeDepositEnabledGas(rp, newValue, opts)
+			response.GasLimits, err = security.EstimateProposeDepositEnabledGas(rp, newValue, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing DepositEnabled: %w", err)
 			}
@@ -88,7 +88,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = security.EstimateProposeAssignDepositsEnabledGas(rp, newValue, opts)
+			response.GasLimits, err = security.EstimateProposeAssignDepositsEnabledGas(rp, newValue, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing AssignDepositsEnabled: %w", err)
 			}
@@ -102,7 +102,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = security.EstimateProposeMinipoolSubmitWithdrawableEnabledGas(rp, newValue, opts)
+			response.GasLimits, err = security.EstimateProposeMinipoolSubmitWithdrawableEnabledGas(rp, newValue, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing MinipoolSubmitWithdrawableEnabled: %w", err)
 			}
@@ -113,7 +113,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = security.EstimateProposeBondReductionEnabledGas(rp, newValue, opts)
+			response.GasLimits, err = security.EstimateProposeBondReductionEnabledGas(rp, newValue, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing BondReductionEnabled: %w", err)
 			}
@@ -127,7 +127,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = security.EstimateProposeSubmitBalancesEnabledGas(rp, newValue, opts)
+			response.GasLimits, err = security.EstimateProposeSubmitBalancesEnabledGas(rp, newValue, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing SubmitBalancesEnabled: %w", err)
 			}
@@ -138,10 +138,21 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = security.EstimateProposeSubmitRewardsEnabledGas(rp, newValue, opts)
+			response.GasLimits, err = security.EstimateProposeSubmitRewardsEnabledGas(rp, newValue, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing SubmitRewardsEnabled: %w", err)
 			}
+
+		case protocol.NetworkNodeCommissionShareSecurityCouncilAdderPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = security.EstimateProposeNodeComissionShareSecurityCouncilAdder(rp, newValue, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing NodeComissionShareSecurityCouncilAdder: %w", err)
+			}
+
 		}
 
 	case protocol.NodeSettingsContractName:
@@ -152,7 +163,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = security.EstimateProposeNodeRegistrationEnabledGas(rp, newValue, opts)
+			response.GasLimits, err = security.EstimateProposeNodeRegistrationEnabledGas(rp, newValue, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing NodeRegistrationEnabled: %w", err)
 			}
@@ -163,7 +174,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = security.EstimateProposeSmoothingPoolRegistrationEnabledGas(rp, newValue, opts)
+			response.GasLimits, err = security.EstimateProposeSmoothingPoolRegistrationEnabledGas(rp, newValue, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing SmoothingPoolRegistrationEnabled: %w", err)
 			}
@@ -174,7 +185,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = security.EstimateProposeNodeDepositEnabledGas(rp, newValue, opts)
+			response.GasLimits, err = security.EstimateProposeNodeDepositEnabledGas(rp, newValue, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing NodeDepositEnabled: %w", err)
 			}
@@ -185,7 +196,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = security.EstimateProposeVacantMinipoolsEnabledGas(rp, newValue, opts)
+			response.GasLimits, err = security.EstimateProposeVacantMinipoolsEnabledGas(rp, newValue, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing VacantMinipoolsEnabled: %w", err)
 			}
@@ -193,8 +204,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 	}
 
 	// Make sure a setting was actually hit
-	blankGasInfo := rocketpool.GasInfo{}
-	if response.GasInfo == blankGasInfo {
+	if response.GasLimits.IsBlank() {
 		return nil, fmt.Errorf("[%s - %s] is not a valid PDAO contract and setting name combo", contractName, settingName)
 	}
 
@@ -204,17 +214,13 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 
 }
 
-func proposeSetting(c *cli.Context, contractName string, settingName string, value string) (*api.ProposePDAOSettingResponse, error) {
+func proposeSetting(c *cli.Command, contractName string, settingName string, value string, opts *bind.TransactOpts) (*api.ProposePDAOSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
 		return nil, err
 	}
 	if err := services.RequireRocketStorage(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -224,18 +230,6 @@ func proposeSetting(c *cli.Context, contractName string, settingName string, val
 
 	// Response
 	response := api.ProposePDAOSettingResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Submit the proposal
 	var proposalID uint64
@@ -339,6 +333,16 @@ func proposeSetting(c *cli.Context, contractName string, settingName string, val
 			proposalID, hash, err = security.ProposeSubmitRewardsEnabled(rp, newValue, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error proposing SubmitRewardsEnabled: %w", err)
+			}
+
+		case protocol.NetworkNodeCommissionShareSecurityCouncilAdderPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = security.ProposeNodeComissionShareSecurityCouncilAdder(rp, newValue, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing NodeComissionShareSecurityCouncilAdder: %w", err)
 			}
 		}
 

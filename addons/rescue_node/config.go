@@ -10,7 +10,7 @@ type RescueNodeConfig struct {
 	Enabled config.Parameter `yaml:"enabled,omitempty"`
 
 	Username config.Parameter `yaml:"username,omitempty"`
-	Password config.Parameter `yaml:"username,omitempty"`
+	Password config.Parameter `yaml:"password,omitempty"`
 }
 
 // Creates a new configuration instance
@@ -62,7 +62,7 @@ func (cfg *RescueNodeConfig) GetParameters() []*config.Parameter {
 	}
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *RescueNodeConfig) GetConfigTitle() string {
 	return cfg.Title
 }

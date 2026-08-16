@@ -1,19 +1,19 @@
 package node
 
 import (
-	"fmt"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 
-	"github.com/rocket-pool/rocketpool-go/node"
-	"github.com/rocket-pool/rocketpool-go/settings/protocol"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/node"
+	"github.com/rocket-pool/smartnode/bindings/settings/protocol"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canRegisterNode(c *cli.Context, timezoneLocation string) (*api.CanRegisterNodeResponse, error) {
+func canRegisterNode(c *cli.Command, timezoneLocation string) (*api.CanRegisterNodeResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -66,9 +66,9 @@ func canRegisterNode(c *cli.Context, timezoneLocation string) (*api.CanRegisterN
 		if err != nil {
 			return err
 		}
-		gasInfo, err := node.EstimateRegisterNodeGas(rp, timezoneLocation, opts)
+		gasLimits, err := node.EstimateRegisterNodeGas(rp, timezoneLocation, opts)
 		if err == nil {
-			response.GasInfo = gasInfo
+			response.GasLimits = gasLimits
 		}
 		return err
 	})
@@ -79,22 +79,18 @@ func canRegisterNode(c *cli.Context, timezoneLocation string) (*api.CanRegisterN
 	}
 
 	// Update & return response
-	response.CanRegister = !(response.AlreadyRegistered || response.RegistrationDisabled)
+	response.CanRegister = !response.AlreadyRegistered && !response.RegistrationDisabled
 	return &response, nil
 
 }
 
-func registerNode(c *cli.Context, timezoneLocation string) (*api.RegisterNodeResponse, error) {
+func registerNode(c *cli.Command, timezoneLocation string, opts *bind.TransactOpts) (*api.RegisterNodeResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
 		return nil, err
 	}
 	if err := services.RequireRocketStorage(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -104,18 +100,6 @@ func registerNode(c *cli.Context, timezoneLocation string) (*api.RegisterNodeRes
 
 	// Response
 	response := api.RegisterNodeResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Register node
 	hash, err := node.RegisterNode(rp, timezoneLocation, opts)

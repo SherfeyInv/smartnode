@@ -1,20 +1,20 @@
 package node
 
 import (
-	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/tokens"
-	"github.com/rocket-pool/rocketpool-go/utils"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/tokens"
+	"github.com/rocket-pool/smartnode/bindings/utils"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canNodeSwapRpl(c *cli.Context, amountWei *big.Int) (*api.CanNodeSwapRplResponse, error) {
+func canNodeSwapRpl(c *cli.Command, amountWei *big.Int) (*api.CanNodeSwapRplResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -53,11 +53,11 @@ func canNodeSwapRpl(c *cli.Context, amountWei *big.Int) (*api.CanNodeSwapRplResp
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := tokens.EstimateSwapFixedSupplyRPLForRPLGas(rp, amountWei, opts)
+	gasLimits, err := tokens.EstimateSwapFixedSupplyRPLForRPLGas(rp, amountWei, opts)
 	if err != nil {
 		return nil, err
 	}
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 
 	// Update & return response
 	response.CanSwap = !response.InsufficientBalance
@@ -65,7 +65,7 @@ func canNodeSwapRpl(c *cli.Context, amountWei *big.Int) (*api.CanNodeSwapRplResp
 
 }
 
-func allowanceFsRpl(c *cli.Context) (*api.NodeSwapRplAllowanceResponse, error) {
+func allowanceFsRpl(c *cli.Command) (*api.NodeSwapRplAllowanceResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
@@ -106,7 +106,7 @@ func allowanceFsRpl(c *cli.Context) (*api.NodeSwapRplAllowanceResponse, error) {
 	return &response, nil
 }
 
-func getSwapApprovalGas(c *cli.Context, amountWei *big.Int) (*api.NodeSwapRplApproveGasResponse, error) {
+func getSwapApprovalGas(c *cli.Command, amountWei *big.Int) (*api.NodeSwapRplApproveGasResponse, error) {
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
 		return nil, err
@@ -137,25 +137,21 @@ func getSwapApprovalGas(c *cli.Context, amountWei *big.Int) (*api.NodeSwapRplApp
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := tokens.EstimateApproveFixedSupplyRPLGas(rp, *rocketTokenRPLAddress, amountWei, opts)
+	gasLimits, err := tokens.EstimateApproveFixedSupplyRPLGas(rp, *rocketTokenRPLAddress, amountWei, opts)
 	if err != nil {
 		return nil, err
 	}
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return &response, nil
 }
 
-func approveFsRpl(c *cli.Context, amountWei *big.Int) (*api.NodeSwapRplApproveResponse, error) {
+func approveFsRpl(c *cli.Command, amountWei *big.Int, opts *bind.TransactOpts) (*api.NodeSwapRplApproveResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
 		return nil, err
 	}
 	if err := services.RequireRocketStorage(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -173,18 +169,8 @@ func approveFsRpl(c *cli.Context, amountWei *big.Int) (*api.NodeSwapRplApproveRe
 	}
 
 	// Approve fixed-supply RPL allowance
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
+	if response.ApproveTxHash, err = tokens.ApproveFixedSupplyRPL(rp, *rocketTokenRPLAddress, amountWei, opts); err != nil {
 		return nil, err
-	}
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
-	if hash, err := tokens.ApproveFixedSupplyRPL(rp, *rocketTokenRPLAddress, amountWei, opts); err != nil {
-		return nil, err
-	} else {
-		response.ApproveTxHash = hash
 	}
 
 	// Return response
@@ -192,7 +178,7 @@ func approveFsRpl(c *cli.Context, amountWei *big.Int) (*api.NodeSwapRplApproveRe
 
 }
 
-func waitForApprovalAndSwapFsRpl(c *cli.Context, amountWei *big.Int, hash common.Hash) (*api.NodeSwapRplSwapResponse, error) {
+func waitForApprovalAndSwapFsRpl(c *cli.Command, amountWei *big.Int, hash common.Hash, opts *bind.TransactOpts) (*api.NodeSwapRplSwapResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -212,18 +198,14 @@ func waitForApprovalAndSwapFsRpl(c *cli.Context, amountWei *big.Int, hash common
 		return nil, err
 	}
 
-	return swapRpl(c, amountWei)
+	return swapRpl(c, amountWei, opts)
 
 }
 
-func swapRpl(c *cli.Context, amountWei *big.Int) (*api.NodeSwapRplSwapResponse, error) {
+func swapRpl(c *cli.Command, amountWei *big.Int, opts *bind.TransactOpts) (*api.NodeSwapRplSwapResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -235,18 +217,8 @@ func swapRpl(c *cli.Context, amountWei *big.Int) (*api.NodeSwapRplSwapResponse, 
 	response := api.NodeSwapRplSwapResponse{}
 
 	// Swap fixed-supply RPL for RPL
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
+	if response.SwapTxHash, err = tokens.SwapFixedSupplyRPLForRPL(rp, amountWei, opts); err != nil {
 		return nil, err
-	}
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
-	if hash, err := tokens.SwapFixedSupplyRPLForRPL(rp, amountWei, opts); err != nil {
-		return nil, err
-	} else {
-		response.SwapTxHash = hash
 	}
 
 	// Return response

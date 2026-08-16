@@ -5,10 +5,11 @@ import (
 	"os"
 
 	"github.com/fatih/color"
-	"github.com/rocket-pool/rocketpool-go/rewards"
+	"github.com/urfave/cli/v3"
+
 	"github.com/rocket-pool/smartnode/shared/services"
+	"github.com/rocket-pool/smartnode/shared/services/config"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/urfave/cli"
 )
 
 const (
@@ -16,7 +17,7 @@ const (
 	ErrorColor   = color.FgRed
 )
 
-func canGenerateRewardsTree(c *cli.Context, index uint64) (*api.CanNetworkGenerateRewardsTreeResponse, error) {
+func canGenerateRewardsTree(c *cli.Command, index uint64) (*api.CanNetworkGenerateRewardsTreeResponse, error) {
 
 	// Get services
 	rp, err := services.GetRocketPool(c)
@@ -32,14 +33,14 @@ func canGenerateRewardsTree(c *cli.Context, index uint64) (*api.CanNetworkGenera
 	response := api.CanNetworkGenerateRewardsTreeResponse{}
 
 	// Get the current interval
-	currentIndexBig, err := rewards.GetRewardIndex(rp, nil)
+	currentIndexBig, err := rp.GetRewardIndex(nil)
 	if err != nil {
 		return nil, err
 	}
 	response.CurrentIndex = currentIndexBig.Uint64()
 
 	// Get the path of the file to save
-	filePath := cfg.Smartnode.GetRewardsTreePath(index, true)
+	filePath := cfg.Smartnode.GetRewardsTreePath(index, true, config.RewardsExtensionJSON)
 	_, err = os.Stat(filePath)
 	if os.IsNotExist(err) {
 		response.TreeFileExists = false
@@ -51,7 +52,7 @@ func canGenerateRewardsTree(c *cli.Context, index uint64) (*api.CanNetworkGenera
 
 }
 
-func generateRewardsTree(c *cli.Context, index uint64) (*api.NetworkGenerateRewardsTreeResponse, error) {
+func generateRewardsTree(c *cli.Command, index uint64) (*api.NetworkGenerateRewardsTreeResponse, error) {
 
 	// Get services
 	cfg, err := services.GetConfig(c)

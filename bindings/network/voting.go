@@ -1,0 +1,180 @@
+package network
+
+import (
+	"fmt"
+	"math/big"
+	"sync"
+
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/node"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/transactions/gaslimit"
+	"github.com/rocket-pool/smartnode/bindings/types"
+	"github.com/rocket-pool/smartnode/bindings/utils/multicall"
+)
+
+const (
+	nodeVotingDetailsBatchSize uint64 = 100
+)
+
+// Get the version of the Rocket Network Voting Contract
+func GetRocketNetworkVotingVersion(rp *rocketpool.RocketPool, opts *bind.CallOpts) (uint8, error) {
+	rocketNetworkVoting, err := getRocketNetworkVoting(rp, opts)
+	if err != nil {
+		return 0, err
+	}
+	return rocketpool.GetContractVersion(rp, *rocketNetworkVoting.Address, opts)
+}
+
+// Gets the voting power and delegation info for every node at the specified block using multicall
+func GetNodeInfoSnapshotFast(rp *rocketpool.RocketPool, blockNumber uint32, multicallAddress common.Address, opts *bind.CallOpts) ([]types.NodeVotingInfo, error) {
+	rocketNetworkVoting, err := getRocketNetworkVoting(rp, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the number of voting nodes
+	nodeCountBig, err := GetVotingNodeCount(rp, blockNumber, opts)
+	if err != nil {
+		return nil, fmt.Errorf("error getting voting node count: %w", err)
+	}
+	nodeCount := nodeCountBig.Uint64()
+
+	// Get the node addresses
+	nodeAddresses, err := node.GetNodeAddressesFast(rp, multicallAddress, opts)
+	if err != nil {
+		return nil, fmt.Errorf("error getting node addresses: %w", err)
+	}
+
+	// Sync
+	var wg errgroup.Group
+
+	// Run the getters in batches
+	votingInfos := make([]types.NodeVotingInfo, nodeCount)
+	for i := uint64(0); i < nodeCount; i += nodeVotingDetailsBatchSize {
+		i := i
+		m := i + nodeVotingDetailsBatchSize
+		if m > nodeCount {
+			m = nodeCount
+		}
+
+		// Load details
+		wg.Go(func() error {
+			var err error
+			mc, err := multicall.NewMultiCaller(rp.Client, multicallAddress)
+			if err != nil {
+				return err
+			}
+			for j := i; j < m; j++ {
+				nodeAddress := nodeAddresses[j]
+				votingInfos[j].NodeAddress = nodeAddress
+				err = mc.AddCall(rocketNetworkVoting, &votingInfos[j].VotingPower, "getVotingPower", nodeAddress, blockNumber)
+				if err != nil {
+					return fmt.Errorf("error adding voting power call for node %s: %w", nodeAddress.Hex(), err)
+				}
+				err = mc.AddCall(rocketNetworkVoting, &votingInfos[j].Delegate, "getDelegate", nodeAddress, blockNumber)
+				if err != nil {
+					return fmt.Errorf("error adding delegate call for node %s: %w", nodeAddress.Hex(), err)
+				}
+			}
+			_, err = mc.FlexibleCall(true, opts)
+			if err != nil {
+				return fmt.Errorf("error executing multicall: %w", err)
+			}
+			return nil
+		})
+	}
+
+	// Wait for data
+	if err := wg.Wait(); err != nil {
+		return nil, err
+	}
+
+	return votingInfos, nil
+}
+
+// Get the number of nodes that were present in the network at the provided block
+func GetVotingNodeCount(rp *rocketpool.RocketPool, blockNumber uint32, opts *bind.CallOpts) (*big.Int, error) {
+	rocketNetworkVoting, err := getRocketNetworkVoting(rp, nil)
+	if err != nil {
+		return nil, err
+	}
+	value := new(*big.Int)
+	if err := rocketNetworkVoting.Call(opts, value, "getNodeCount", blockNumber); err != nil {
+		return nil, fmt.Errorf("error getting node count for block %d: %w", blockNumber, err)
+	}
+	return *value, nil
+}
+
+// Get the voting power of the given node on the provided block
+func GetVotingPower(rp *rocketpool.RocketPool, address common.Address, blockNumber uint32, opts *bind.CallOpts) (*big.Int, error) {
+	rocketNetworkVoting, err := getRocketNetworkVoting(rp, nil)
+	if err != nil {
+		return nil, err
+	}
+	value := new(*big.Int)
+	if err := rocketNetworkVoting.Call(opts, value, "getVotingPower", address, blockNumber); err != nil {
+		return nil, fmt.Errorf("error getting voting power for node %s on block %d: %w", address.Hex(), blockNumber, err)
+	}
+	return *value, nil
+}
+
+// Get the address that the provided node has delegated voting power to on the given block
+func GetVotingDelegate(rp *rocketpool.RocketPool, address common.Address, blockNumber uint32, opts *bind.CallOpts) (common.Address, error) {
+	rocketNetworkVoting, err := getRocketNetworkVoting(rp, nil)
+	if err != nil {
+		return common.Address{}, err
+	}
+	value := new(common.Address)
+	if err := rocketNetworkVoting.Call(opts, value, "getDelegate", address, blockNumber); err != nil {
+		return common.Address{}, fmt.Errorf("error getting delegate for node %s on block %d: %w", address.Hex(), blockNumber, err)
+	}
+	return *value, nil
+}
+
+// Get the address that the provided node has currently delegated voting power to
+func GetCurrentVotingDelegate(rp *rocketpool.RocketPool, address common.Address, opts *bind.CallOpts) (common.Address, error) {
+	rocketNetworkVoting, err := getRocketNetworkVoting(rp, nil)
+	if err != nil {
+		return common.Address{}, err
+	}
+	value := new(common.Address)
+	if err := rocketNetworkVoting.Call(opts, value, "getCurrentDelegate", address); err != nil {
+		return common.Address{}, fmt.Errorf("error getting current delegate for node %s: %w", address.Hex(), err)
+	}
+	return *value, nil
+}
+
+// Estimate the gas of SetVotingDelegate
+func EstimateSetVotingDelegateGas(rp *rocketpool.RocketPool, newDelegate common.Address, opts *bind.TransactOpts) (gaslimit.Limits, error) {
+	rocketNetworkVoting, err := getRocketNetworkVoting(rp, nil)
+	if err != nil {
+		return gaslimit.Limits{}, err
+	}
+	return rocketNetworkVoting.GetTransactionGasInfo(opts, "setDelegate", newDelegate)
+}
+
+// Set the voting delegate for the node
+func SetVotingDelegate(rp *rocketpool.RocketPool, newDelegate common.Address, opts *bind.TransactOpts) (common.Hash, error) {
+	rocketNetworkVoting, err := getRocketNetworkVoting(rp, nil)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	tx, err := rocketNetworkVoting.Transact(opts, "setDelegate", newDelegate)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("error setting voting delegate: %w", err)
+	}
+	return tx.Hash(), nil
+}
+
+// Get contracts
+var rocketNetworkVotingLock sync.Mutex
+
+func getRocketNetworkVoting(rp *rocketpool.RocketPool, opts *bind.CallOpts) (*rocketpool.Contract, error) {
+	rocketNetworkVotingLock.Lock()
+	defer rocketNetworkVotingLock.Unlock()
+	return rp.GetContract("rocketNetworkVoting", opts)
+}

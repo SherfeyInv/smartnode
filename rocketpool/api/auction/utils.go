@@ -5,13 +5,14 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/auction"
-	"github.com/rocket-pool/rocketpool-go/network"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/settings/protocol"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/rocket-pool/smartnode/bindings/auction"
+	"github.com/rocket-pool/smartnode/bindings/network"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/settings/protocol"
+
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/types/api"
 )
 
@@ -95,7 +96,7 @@ func getSufficientRemainingRPLForLot(rp *rocketpool.RocketPool) (bool, error) {
 	// Calculate lot minimum RPL amount
 	var tmp big.Int
 	var lotMinimumRplAmount big.Int
-	tmp.Mul(lotMinimumEthValue, eth.EthToWei(1))
+	tmp.Mul(lotMinimumEthValue, math.EthToWei(1))
 	lotMinimumRplAmount.Quo(&tmp, rplPrice)
 
 	// Return

@@ -2,6 +2,7 @@ package config
 
 import (
 	"github.com/rivo/tview"
+
 	"github.com/rocket-pool/smartnode/shared/services/config"
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
 )
@@ -22,11 +23,12 @@ type MevBoostConfigPage struct {
 	flashbotsBox          *parameterizedFormItem
 	bloxrouteMaxProfitBox *parameterizedFormItem
 	bloxrouteRegulatedBox *parameterizedFormItem
-	edenBox               *parameterizedFormItem
 	ultrasoundBox         *parameterizedFormItem
+	ultrasoundFilteredBox *parameterizedFormItem
 	aestusBox             *parameterizedFormItem
 	titanGlobalBox        *parameterizedFormItem
 	titanRegionalBox      *parameterizedFormItem
+	btcsOfacBox           *parameterizedFormItem
 }
 
 // Creates a new page for the MEV-Boost settings
@@ -76,21 +78,22 @@ func (configPage *MevBoostConfigPage) createContent() {
 	}
 	externalParams := []*cfgtypes.Parameter{&configPage.masterConfig.MevBoost.ExternalUrl}
 
-	configPage.localItems = createParameterizedFormItems(localParams, configPage.layout.descriptionBox)
-	configPage.externalItems = createParameterizedFormItems(externalParams, configPage.layout.descriptionBox)
+	configPage.localItems = createParameterizedFormItems(localParams, configPage.layout)
+	configPage.externalItems = createParameterizedFormItems(externalParams, configPage.layout)
 
 	configPage.flashbotsBox = createParameterizedCheckbox(&configPage.masterConfig.MevBoost.FlashbotsRelay)
 	configPage.bloxrouteMaxProfitBox = createParameterizedCheckbox(&configPage.masterConfig.MevBoost.BloxRouteMaxProfitRelay)
 	configPage.bloxrouteRegulatedBox = createParameterizedCheckbox(&configPage.masterConfig.MevBoost.BloxRouteRegulatedRelay)
-	configPage.edenBox = createParameterizedCheckbox(&configPage.masterConfig.MevBoost.EdenRelay)
 	configPage.ultrasoundBox = createParameterizedCheckbox(&configPage.masterConfig.MevBoost.UltrasoundRelay)
+	configPage.ultrasoundFilteredBox = createParameterizedCheckbox(&configPage.masterConfig.MevBoost.UltrasoundFilteredRelay)
 	configPage.aestusBox = createParameterizedCheckbox(&configPage.masterConfig.MevBoost.AestusRelay)
 	configPage.titanGlobalBox = createParameterizedCheckbox(&configPage.masterConfig.MevBoost.TitanGlobalRelay)
 	configPage.titanRegionalBox = createParameterizedCheckbox(&configPage.masterConfig.MevBoost.TitanRegionalRelay)
+	configPage.btcsOfacBox = createParameterizedCheckbox(&configPage.masterConfig.MevBoost.BtcsOfacRelay)
 
 	// Map the parameters to the form items in the layout
 	configPage.layout.mapParameterizedFormItems(configPage.enableBox, configPage.modeBox, configPage.selectionModeBox)
-	configPage.layout.mapParameterizedFormItems(configPage.flashbotsBox, configPage.bloxrouteMaxProfitBox, configPage.bloxrouteRegulatedBox, configPage.edenBox, configPage.ultrasoundBox, configPage.aestusBox, configPage.titanGlobalBox, configPage.titanRegionalBox)
+	configPage.layout.mapParameterizedFormItems(configPage.flashbotsBox, configPage.bloxrouteMaxProfitBox, configPage.bloxrouteRegulatedBox, configPage.ultrasoundBox, configPage.ultrasoundFilteredBox, configPage.aestusBox, configPage.titanGlobalBox, configPage.titanRegionalBox, configPage.btcsOfacBox)
 	configPage.layout.mapParameterizedFormItems(configPage.localItems...)
 	configPage.layout.mapParameterizedFormItems(configPage.externalItems...)
 
@@ -171,16 +174,18 @@ func (configPage *MevBoostConfigPage) handleSelectionModeChanged() {
 				configPage.layout.form.AddFormItem(configPage.bloxrouteMaxProfitBox.item)
 			case cfgtypes.MevRelayID_BloxrouteRegulated:
 				configPage.layout.form.AddFormItem(configPage.bloxrouteRegulatedBox.item)
-			case cfgtypes.MevRelayID_Eden:
-				configPage.layout.form.AddFormItem(configPage.edenBox.item)
 			case cfgtypes.MevRelayID_Ultrasound:
 				configPage.layout.form.AddFormItem(configPage.ultrasoundBox.item)
+			case cfgtypes.MevRelayID_UltrasoundFiltered:
+				configPage.layout.form.AddFormItem(configPage.ultrasoundFilteredBox.item)
 			case cfgtypes.MevRelayID_Aestus:
 				configPage.layout.form.AddFormItem(configPage.aestusBox.item)
 			case cfgtypes.MevRelayID_TitanGlobal:
 				configPage.layout.form.AddFormItem(configPage.titanGlobalBox.item)
 			case cfgtypes.MevRelayID_TitanRegional:
 				configPage.layout.form.AddFormItem(configPage.titanRegionalBox.item)
+			case cfgtypes.MevRelayID_BTCSOfac:
+				configPage.layout.form.AddFormItem(configPage.btcsOfacBox.item)
 			}
 		}
 	}

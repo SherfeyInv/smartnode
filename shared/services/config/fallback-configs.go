@@ -37,10 +37,10 @@ func NewFallbackNormalConfig(cfg *RocketPoolConfig) *FallbackNormalConfig {
 		EcHttpUrl: config.Parameter{
 			ID:                 "ecHttpUrl",
 			Name:               "Execution Client URL",
-			Description:        "The URL of the HTTP API endpoint for your fallback Execution client.\n\nNOTE: If you are running it on the same machine as the Smartnode, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
+			Description:        "The URL of the HTTP API endpoint for your fallback Execution client.\n\nNOTE: If you are running it on the same machine as the Smart Node, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Node, config.ContainerID_Watchtower},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Watchtower},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
@@ -48,10 +48,10 @@ func NewFallbackNormalConfig(cfg *RocketPoolConfig) *FallbackNormalConfig {
 		CcHttpUrl: config.Parameter{
 			ID:                 "ccHttpUrl",
 			Name:               "Beacon Node URL",
-			Description:        "The URL of the HTTP Beacon API endpoint for your fallback Consensus client.\n\nNOTE: If you are running it on the same machine as the Smartnode, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
+			Description:        "The URL of the HTTP Beacon API endpoint for your fallback Consensus client.\n\nNOTE: If you are running it on the same machine as the Smart Node, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Node, config.ContainerID_Validator, config.ContainerID_Watchtower},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Validator, config.ContainerID_Watchtower},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
@@ -66,10 +66,10 @@ func NewFallbackPrysmConfig(cfg *RocketPoolConfig) *FallbackPrysmConfig {
 		EcHttpUrl: config.Parameter{
 			ID:                 "ecHttpUrl",
 			Name:               "Execution Client URL",
-			Description:        "The URL of the HTTP API endpoint for your fallback Execution client.\n\nNOTE: If you are running it on the same machine as the Smartnode, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
+			Description:        "The URL of the HTTP API endpoint for your fallback Execution client.\n\nNOTE: If you are running it on the same machine as the Smart Node, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Node, config.ContainerID_Watchtower},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Watchtower},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
@@ -77,10 +77,10 @@ func NewFallbackPrysmConfig(cfg *RocketPoolConfig) *FallbackPrysmConfig {
 		CcHttpUrl: config.Parameter{
 			ID:                 "ccHttpUrl",
 			Name:               "Beacon Node HTTP URL",
-			Description:        "The URL of the HTTP Beacon API endpoint for your fallback Prysm client.\n\nNOTE: If you are running it on the same machine as the Smartnode, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
+			Description:        "The URL of the HTTP Beacon API endpoint for your fallback Prysm client.\n\nNOTE: If you are running it on the same machine as the Smart Node, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Node, config.ContainerID_Validator, config.ContainerID_Watchtower},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Validator, config.ContainerID_Watchtower},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
@@ -88,7 +88,7 @@ func NewFallbackPrysmConfig(cfg *RocketPoolConfig) *FallbackPrysmConfig {
 		JsonRpcUrl: config.Parameter{
 			ID:                 "jsonRpcUrl",
 			Name:               "Beacon Node JSON-RPC URL",
-			Description:        "The URL of the JSON-RPC API endpoint for your fallback client. Prysm's validator client will need this in order to connect to it.\n\nNOTE: If you are running it on the same machine as the Smartnode, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
+			Description:        "The URL of the JSON-RPC API endpoint for your fallback client. Prysm's validator client will need this in order to connect to it.\n\nNOTE: If you are running it on the same machine as the Smart Node, addresses like `localhost` and `127.0.0.1` will not work due to Docker limitations. Enter your machine's LAN IP address instead.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
@@ -115,12 +115,12 @@ func (cfg *FallbackPrysmConfig) GetParameters() []*config.Parameter {
 	}
 }
 
-// The the title for the config
-func (config *FallbackNormalConfig) GetConfigTitle() string {
-	return config.Title
+// The title for the config
+func (cfg *FallbackNormalConfig) GetConfigTitle() string {
+	return cfg.Title
 }
 
-// The the title for the config
-func (config *FallbackPrysmConfig) GetConfigTitle() string {
-	return config.Title
+// The title for the config
+func (cfg *FallbackPrysmConfig) GetConfigTitle() string {
+	return cfg.Title
 }

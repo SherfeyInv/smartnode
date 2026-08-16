@@ -1,21 +1,21 @@
 package node
 
 import (
-	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/node"
-	"github.com/rocket-pool/rocketpool-go/storage"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/rocket-pool/smartnode/bindings/node"
+	"github.com/rocket-pool/smartnode/bindings/storage"
 	"github.com/rocket-pool/smartnode/shared/services"
+
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canSetRPLWithdrawalAddress(c *cli.Context, withdrawalAddress common.Address, confirm bool) (*api.CanSetNodeRPLWithdrawalAddressResponse, error) {
+func canSetRPLWithdrawalAddress(c *cli.Command, withdrawalAddress common.Address, confirm bool) (*api.CanSetNodeRPLWithdrawalAddressResponse, error) {
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
 		return nil, err
@@ -75,10 +75,9 @@ func canSetRPLWithdrawalAddress(c *cli.Context, withdrawalAddress common.Address
 	// Get the RPL stake amount
 	wg.Go(func() error {
 		var err error
-		rplStake, err = node.GetNodeRPLStake(rp, nodeAccount.Address, nil)
+		rplStake, err = node.GetNodeStakedRPL(rp, nodeAccount.Address, nil)
 		return err
 	})
-
 	// Wait for data
 	if err := wg.Wait(); err != nil {
 		return nil, err
@@ -88,23 +87,23 @@ func canSetRPLWithdrawalAddress(c *cli.Context, withdrawalAddress common.Address
 	response.RPLStake = rplStake
 	response.PrimaryAddressDiffers = (nodeAccount.Address != primaryWithdrawalAddress || isRPLWithdrawalAddressSet)
 	response.RPLAddressDiffers = (isRPLWithdrawalAddressSet && nodeAccount.Address != rplWithdrawalAddress)
-	response.CanSet = !(response.PrimaryAddressDiffers || response.RPLAddressDiffers)
+	response.CanSet = !response.PrimaryAddressDiffers && !response.RPLAddressDiffers
 	if !response.CanSet {
 		return &response, nil
 	}
 
 	// Check withdrawal address setting
-	gasInfo, err := node.EstimateSetRPLWithdrawalAddressGas(rp, nodeAccount.Address, withdrawalAddress, confirm, opts)
+	gasLimits, err := node.EstimateSetRPLWithdrawalAddressGas(rp, nodeAccount.Address, withdrawalAddress, confirm, opts)
 	if err != nil {
 		return nil, err
 	}
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 
 	// Return response
 	return &response, nil
 }
 
-func setRPLWithdrawalAddress(c *cli.Context, withdrawalAddress common.Address, confirm bool) (*api.SetNodeRPLWithdrawalAddressResponse, error) {
+func setRPLWithdrawalAddress(c *cli.Command, withdrawalAddress common.Address, confirm bool, opts *bind.TransactOpts) (*api.SetNodeRPLWithdrawalAddressResponse, error) {
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
 		return nil, err
@@ -120,18 +119,6 @@ func setRPLWithdrawalAddress(c *cli.Context, withdrawalAddress common.Address, c
 
 	// Response
 	response := api.SetNodeRPLWithdrawalAddressResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Get the node's account
 	nodeAccount, err := w.GetNodeAccount()
@@ -150,7 +137,7 @@ func setRPLWithdrawalAddress(c *cli.Context, withdrawalAddress common.Address, c
 	return &response, nil
 }
 
-func canConfirmRPLWithdrawalAddress(c *cli.Context) (*api.CanConfirmNodeRPLWithdrawalAddressResponse, error) {
+func canConfirmRPLWithdrawalAddress(c *cli.Command) (*api.CanConfirmNodeRPLWithdrawalAddressResponse, error) {
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
 		return nil, err
@@ -191,17 +178,17 @@ func canConfirmRPLWithdrawalAddress(c *cli.Context) (*api.CanConfirmNodeRPLWithd
 	}
 
 	// Check withdrawal address setting
-	gasInfo, err := node.EstimateConfirmRPLWithdrawalAddressGas(rp, nodeAccount.Address, opts)
+	gasLimits, err := node.EstimateConfirmRPLWithdrawalAddressGas(rp, nodeAccount.Address, opts)
 	if err != nil {
 		return nil, err
 	}
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 
 	// Return response
 	return &response, nil
 }
 
-func confirmRPLWithdrawalAddress(c *cli.Context) (*api.ConfirmNodeRPLWithdrawalAddressResponse, error) {
+func confirmRPLWithdrawalAddress(c *cli.Command, opts *bind.TransactOpts) (*api.ConfirmNodeRPLWithdrawalAddressResponse, error) {
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
 		return nil, err
@@ -217,18 +204,6 @@ func confirmRPLWithdrawalAddress(c *cli.Context) (*api.ConfirmNodeRPLWithdrawalA
 
 	// Response
 	response := api.ConfirmNodeRPLWithdrawalAddressResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Get the node's account
 	nodeAccount, err := w.GetNodeAccount()

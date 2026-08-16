@@ -1,14 +1,13 @@
 package wallet
 
 import (
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	walletutils "github.com/rocket-pool/smartnode/shared/utils/wallet"
 )
 
-func rebuildWallet(c *cli.Context) (*api.RebuildWalletResponse, error) {
+func rebuildWallet(c *cli.Command) (*api.RebuildWalletResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -25,6 +24,10 @@ func rebuildWallet(c *cli.Context) (*api.RebuildWalletResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+	bc, err := services.GetBeaconClient(c)
+	if err != nil {
+		return nil, err
+	}
 
 	// Response
 	response := api.RebuildWalletResponse{}
@@ -36,7 +39,7 @@ func rebuildWallet(c *cli.Context) (*api.RebuildWalletResponse, error) {
 	}
 
 	// Recover validator keys
-	response.ValidatorKeys, err = walletutils.RecoverMinipoolKeys(c, rp, nodeAccount.Address, w, false)
+	response.ValidatorKeys, err = recoverNodeKeys(c, rp, bc, nodeAccount.Address, w, false)
 	if err != nil {
 		return nil, err
 	}

@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/url"
 	"os"
@@ -14,26 +16,27 @@ import (
 	"github.com/alessio/shellescape"
 	externalip "github.com/glendc/go-external-ip"
 	"github.com/pbnjay/memory"
+	"gopkg.in/yaml.v2"
+
 	"github.com/rocket-pool/smartnode/addons"
 	"github.com/rocket-pool/smartnode/addons/rescue_node"
 	"github.com/rocket-pool/smartnode/shared"
 	"github.com/rocket-pool/smartnode/shared/services/config/migration"
 	addontypes "github.com/rocket-pool/smartnode/shared/types/addons"
 	"github.com/rocket-pool/smartnode/shared/types/config"
-	"gopkg.in/yaml.v2"
 )
 
 // Constants
 const (
 	rootConfigName string = "root"
 
-	ApiContainerName          string = "api"
 	Eth1ContainerName         string = "eth1"
 	Eth1FallbackContainerName string = "eth1-fallback"
 	Eth2ContainerName         string = "eth2"
 	ExporterContainerName     string = "exporter"
 	GrafanaContainerName      string = "grafana"
 	MevBoostContainerName     string = "mev-boost"
+	CommitBoostContainerName  string = "commit-boost"
 	NodeContainerName         string = "node"
 	PrometheusContainerName   string = "prometheus"
 	AlertmanagerContainerName string = "alertmanager"
@@ -48,6 +51,7 @@ const defaultNodeMetricsPort uint16 = 9102
 const defaultExporterMetricsPort uint16 = 9103
 const defaultWatchtowerMetricsPort uint16 = 9104
 const defaultEcMetricsPort uint16 = 9105
+const coreDevsSuggestedGasLimit = 60000000
 
 // The master configuration struct
 type RocketPoolConfig struct {
@@ -72,6 +76,9 @@ type RocketPoolConfig struct {
 	ConsensusClient         config.Parameter `yaml:"consensusClient,omitempty"`
 	ExternalConsensusClient config.Parameter `yaml:"externalConsensusClient,omitempty"`
 
+	// IPv6 networking
+	EnableIPv6 config.Parameter `yaml:"enableIPv6,omitempty"`
+
 	// Metrics settings
 	EnableMetrics           config.Parameter `yaml:"enableMetrics,omitempty"`
 	EnableODaoMetrics       config.Parameter `yaml:"enableODaoMetrics,omitempty"`
@@ -83,7 +90,7 @@ type RocketPoolConfig struct {
 	WatchtowerMetricsPort   config.Parameter `yaml:"watchtowerMetricsPort,omitempty"`
 	EnableBitflyNodeMetrics config.Parameter `yaml:"enableBitflyNodeMetrics,omitempty"`
 
-	// The Smartnode configuration
+	// The Smart Node configuration
 	Smartnode *SmartnodeConfig `yaml:"smartnode,omitempty"`
 
 	// Execution client configurations
@@ -125,6 +132,10 @@ type RocketPoolConfig struct {
 	EnableMevBoost config.Parameter `yaml:"enableMevBoost,omitempty"`
 	MevBoost       *MevBoostConfig  `yaml:"mevBoost,omitempty"`
 
+	// Commit-Boost
+	EnableCommitBoost config.Parameter   `yaml:"enableCommitBoost,omitempty"`
+	CommitBoost       *CommitBoostConfig `yaml:"commitBoostConfig,omitempty"`
+
 	// Addons
 	GraffitiWallWriter addontypes.SmartnodeAddon `yaml:"addon-gww,omitempty"`
 	RescueNode         addontypes.SmartnodeAddon `yaml:"addon-rescue-node,omitempty"`
@@ -137,14 +148,22 @@ func getExternalIP() (net.IP, error) {
 	// Try IPv4 first
 	consensusConfig := externalip.ConsensusConfig{Timeout: 3 * time.Second}
 	ip4Consensus := externalip.DefaultConsensus(&consensusConfig, nil)
-	ip4Consensus.UseIPProtocol(4)
+	err := ip4Consensus.UseIPProtocol(4)
+	if err != nil {
+		// Only panics if the IP protocol isn't one of 0, 4, or 6
+		panic(err)
+	}
 	if ip, err := ip4Consensus.ExternalIP(); err == nil {
 		return ip, nil
 	}
 
 	// Try IPv6 as fallback
 	ip6Consensus := externalip.DefaultConsensus(nil, nil)
-	ip6Consensus.UseIPProtocol(6)
+	err = ip6Consensus.UseIPProtocol(6)
+	if err != nil {
+		// Only panics if the IP protocol isn't one of 0, 4, or 6
+		panic(err)
+	}
 	return ip6Consensus.ExternalIP()
 }
 
@@ -180,12 +199,74 @@ func LoadFromFile(path string) (*RocketPoolConfig, error) {
 
 }
 
+func (cfg *RocketPoolConfig) Save(directory, filename string) error {
+	path := filepath.Join(directory, filename)
+
+	settings := cfg.Serialize()
+	configBytes, err := yaml.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("could not serialize settings file: %w", err)
+	}
+
+	// Make a tmp file
+	// The empty string directs CreateTemp to use the OS's $TMPDIR (or GetTempPath) on windows
+	// The * in the second string is replaced with random characters by CreateTemp
+	f, err := os.CreateTemp(directory, ".tmp-"+filename+"-*")
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("could not create file to save config to disk... do you need to clean your tmpdir (%s)?: %w", os.TempDir(), err)
+		}
+
+		return fmt.Errorf("could not create file to save config to disk: %w", err)
+	}
+	// Clean up the temporary files
+	// This prevents us from filling up `directory` with partially written files on failure
+	// If the file is successfully written, it fails with an error since it will be renamed
+	// before it is deleted, which we explicitly ignore / don't care about.
+	defer func() {
+		// Clean up tmp files, if any found
+		oldFiles, err := filepath.Glob(filepath.Join(directory, ".tmp-"+filename+"-*"))
+		if err != nil {
+			// Only possible error is ErrBadPattern, which we should catch
+			// during development, since the pattern is a comptime constant.
+			panic(err.Error())
+		}
+
+		for _, match := range oldFiles {
+			_ = os.RemoveAll(match)
+		}
+	}()
+
+	// Save the serialized settings to the temporary file
+	if _, err := f.Write(configBytes); err != nil {
+		return fmt.Errorf("could not write Rocket Pool config to %s: %w", shellescape.Quote(path), err)
+	}
+
+	// Close the file for writing
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("error saving Rocket Pool config to %s: %w", shellescape.Quote(path), err)
+	}
+
+	// Rename the temp file to overwrite the actual file.
+	// On Unix systems this operation is atomic and won't fail if the disk is now full
+	if err := os.Rename(f.Name(), path); err != nil {
+		return fmt.Errorf("error replacing old Rocket Pool config with %s: %w", f.Name(), err)
+	}
+
+	// Just in case the rename didn't overwrite (and preserve the perms of) the original file, set them now.
+	if err := os.Chmod(path, 0664); err != nil {
+		return fmt.Errorf("error updating permissions of %s: %w", path, err)
+	}
+
+	return nil
+}
+
 // Creates a new Rocket Pool configuration instance
 func NewRocketPoolConfig(rpDir string, isNativeMode bool) *RocketPoolConfig {
 
 	clientModes := []config.ParameterOption{{
 		Name:        "Locally Managed",
-		Description: "Allow the Smartnode to manage the Execution and Consensus clients for you (Docker Mode)",
+		Description: "Allow the Smart Node to manage the Execution and Consensus clients for you (Docker Mode)",
 		Value:       config.Mode_Local,
 	}, {
 		Name:        "Externally Managed",
@@ -204,7 +285,7 @@ func NewRocketPoolConfig(rpDir string, isNativeMode bool) *RocketPoolConfig {
 			Description:        "Choose which mode to use for your Execution client - locally managed (Docker Mode), or externally managed (Hybrid Mode).",
 			Type:               config.ParameterType_Choice,
 			Default:            map[config.Network]interface{}{},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Eth1, config.ContainerID_Eth2, config.ContainerID_Node, config.ContainerID_Watchtower},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1, config.ContainerID_Eth2, config.ContainerID_Node, config.ContainerID_Watchtower},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 			Options:            clientModes,
@@ -241,10 +322,10 @@ func NewRocketPoolConfig(rpDir string, isNativeMode bool) *RocketPoolConfig {
 		UseFallbackClients: config.Parameter{
 			ID:                 "useFallbackClients",
 			Name:               "Use Fallback Clients",
-			Description:        "Enable this if you would like to specify a fallback Execution and Consensus Client, which will temporarily be used by the Smartnode and your Validator Client if your primary Execution / Consensus client pair ever go offline (e.g. if you switch, prune, or resync your clients).",
+			Description:        "Enable this if you would like to specify a fallback Execution and Consensus Client, which will temporarily be used by the Smart Node and your Validator Client if your primary Execution / Consensus client pair ever go offline (e.g. if you switch, prune, or resync your clients).",
 			Type:               config.ParameterType_Bool,
 			Default:            map[config.Network]interface{}{config.Network_All: false},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Validator, config.ContainerID_Node, config.ContainerID_Watchtower},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator, config.ContainerID_Node, config.ContainerID_Watchtower},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
@@ -255,7 +336,7 @@ func NewRocketPoolConfig(rpDir string, isNativeMode bool) *RocketPoolConfig {
 			Description:        "The delay to wait after your primary Execution or Consensus clients fail before trying to reconnect to them. An example format is \"10h20m30s\" - this would make it 10 hours, 20 minutes, and 30 seconds.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: "60s"},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Node, config.ContainerID_Watchtower},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Watchtower},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
@@ -266,7 +347,7 @@ func NewRocketPoolConfig(rpDir string, isNativeMode bool) *RocketPoolConfig {
 			Description:        "Choose which mode to use for your Consensus client - locally managed (Docker Mode), or externally managed (Hybrid Mode).",
 			Type:               config.ParameterType_Choice,
 			Default:            map[config.Network]interface{}{config.Network_All: config.Mode_Local},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Eth2, config.ContainerID_Node, config.ContainerID_Prometheus, config.ContainerID_Validator, config.ContainerID_Watchtower},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2, config.ContainerID_Node, config.ContainerID_Prometheus, config.ContainerID_Validator, config.ContainerID_Watchtower},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 			Options:            clientModes,
@@ -278,7 +359,7 @@ func NewRocketPoolConfig(rpDir string, isNativeMode bool) *RocketPoolConfig {
 			Description:        "Select which Consensus client you would like to use.",
 			Type:               config.ParameterType_Choice,
 			Default:            map[config.Network]interface{}{config.Network_All: config.ConsensusClient_Nimbus},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Eth2, config.ContainerID_Validator},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Eth2, config.ContainerID_Validator},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 			Options: []config.ParameterOption{{
@@ -310,7 +391,7 @@ func NewRocketPoolConfig(rpDir string, isNativeMode bool) *RocketPoolConfig {
 			Description:        "Select which Consensus client your externally managed client is.",
 			Type:               config.ParameterType_Choice,
 			Default:            map[config.Network]interface{}{config.Network_All: config.ConsensusClient_Lighthouse},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Eth2, config.ContainerID_Validator},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Eth2, config.ContainerID_Validator},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 			Options: []config.ParameterOption{{
@@ -336,10 +417,21 @@ func NewRocketPoolConfig(rpDir string, isNativeMode bool) *RocketPoolConfig {
 			}},
 		},
 
+		EnableIPv6: config.Parameter{
+			ID:                 "enableIPv6",
+			Name:               "Enable IPv6",
+			Description:        "Enables dual-stack (IPv4 + IPv6) networking for the Smart Node. When enabled, your Ethereum clients will listen on both IPv4 and IPv6 and can peer with IPv6 nodes in addition to IPv4. Enable this if your machine has only an IPv6 address, or if you want your node to participate in IPv6 peering.",
+			Type:               config.ParameterType_Bool,
+			Default:            map[config.Network]interface{}{config.Network_All: false},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Eth1, config.ContainerID_Eth2, config.ContainerID_Validator, config.ContainerID_Grafana, config.ContainerID_Prometheus, config.ContainerID_Alertmanager, config.ContainerID_Exporter, config.ContainerID_MevBoost, config.ContainerID_CommitBoost},
+			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
+		},
+
 		EnableMetrics: config.Parameter{
 			ID:                 "enableMetrics",
 			Name:               "Enable Metrics",
-			Description:        "Enable the Smartnode's performance and status metrics system. This will provide you with the node operator's Grafana dashboard.",
+			Description:        "Enable the Smart Node's performance and status metrics system. This will provide you with the node operator's Grafana dashboard.",
 			Type:               config.ParameterType_Bool,
 			Default:            map[config.Network]interface{}{config.Network_All: true},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Eth2, config.ContainerID_Grafana, config.ContainerID_Prometheus, config.ContainerID_Exporter, config.ContainerID_Alertmanager},
@@ -438,12 +530,22 @@ func NewRocketPoolConfig(rpDir string, isNativeMode bool) *RocketPoolConfig {
 		EnableMevBoost: config.Parameter{
 			ID:                 "enableMevBoost",
 			Name:               "Enable MEV-Boost",
-			Description:        "Enable MEV-Boost, which connects your validator to one or more relays of your choice. The relays act as intermediaries between you and professional block builders that find and extract MEV opportunities. The builders will give you a healthy tip in return, which tends to be worth more than blocks you built on your own.\n\n[orange]NOTE: This toggle is temporary during the early Merge days while relays are still being created. It will be removed in the future.",
+			Description:        "Enable MEV-Boost, which connects your validator to one or more relays of your choice. The relays act as intermediaries between you and professional block builders that find and extract MEV opportunities. The builders will give you a healthy tip in return, which tends to be worth more than blocks you built on your own.\n\n",
 			Type:               config.ParameterType_Bool,
 			Default:            map[config.Network]interface{}{config.Network_All: true},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2, config.ContainerID_MevBoost},
 			CanBeBlank:         false,
-			OverwriteOnUpgrade: true,
+			OverwriteOnUpgrade: false,
+		},
+		EnableCommitBoost: config.Parameter{
+			ID:                 "enableCommitBoost",
+			Name:               "Enable Commit-Boost",
+			Description:        "Enable Commit-Boost, which connects your validator to one or more relays of your choice. The relays act as intermediaries between you and professional block builders that find and extract opportunities. The builders will give you a healthy tip in return, which tends to be worth more than blocks you built on your own.\n\n",
+			Type:               config.ParameterType_Bool,
+			Default:            map[config.Network]interface{}{config.Network_All: false},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2, config.ContainerID_CommitBoost},
+			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
 		},
 	}
 
@@ -478,14 +580,20 @@ func NewRocketPoolConfig(rpDir string, isNativeMode bool) *RocketPoolConfig {
 	cfg.BitflyNodeMetrics = NewBitflyNodeMetricsConfig(cfg)
 	cfg.Native = NewNativeConfig(cfg)
 	cfg.MevBoost = NewMevBoostConfig(cfg)
-
+	cfg.CommitBoost = NewCommitBoostConfig(cfg)
 	// Addons
 	cfg.GraffitiWallWriter = addons.NewGraffitiWallWriter()
 	cfg.RescueNode = addons.NewRescueNode()
 
 	// Apply the default values for mainnet
 	cfg.Smartnode.Network.Value = cfg.Smartnode.Network.Options[0].Value
-	cfg.applyAllDefaults()
+	err := cfg.applyAllDefaults()
+	if err != nil {
+		// This function is called in a lot of pure contexts, and
+		// we shouldn't ever see a failure on applying the defaults anyway - at runtime.
+		// This panic should get caught during CI
+		panic(err)
+	}
 
 	return cfg
 }
@@ -541,6 +649,7 @@ func (cfg *RocketPoolConfig) GetParameters() []*config.Parameter {
 		&cfg.ConsensusClientMode,
 		&cfg.ConsensusClient,
 		&cfg.ExternalConsensusClient,
+		&cfg.EnableIPv6,
 		&cfg.EnableMetrics,
 		&cfg.EnableODaoMetrics,
 		&cfg.EnableBitflyNodeMetrics,
@@ -551,6 +660,7 @@ func (cfg *RocketPoolConfig) GetParameters() []*config.Parameter {
 		&cfg.ExporterMetricsPort,
 		&cfg.WatchtowerMetricsPort,
 		&cfg.EnableMevBoost,
+		&cfg.EnableCommitBoost,
 	}
 }
 
@@ -584,6 +694,7 @@ func (cfg *RocketPoolConfig) GetSubconfigs() map[string]config.Config {
 		"bitflyNodeMetrics":  cfg.BitflyNodeMetrics,
 		"native":             cfg.Native,
 		"mevBoost":           cfg.MevBoost,
+		"commitBoostConfig":  cfg.CommitBoost,
 		"addons-gww":         cfg.GraffitiWallWriter.GetConfig(),
 		"addons-rescue-node": cfg.RescueNode.GetConfig(),
 	}
@@ -760,7 +871,7 @@ func (cfg *RocketPoolConfig) Serialize() map[string]map[string]string {
 	masterMap[rootConfigName] = rootParams
 	masterMap[rootConfigName]["rpDir"] = cfg.RocketPoolDirectory
 	masterMap[rootConfigName]["isNative"] = fmt.Sprint(cfg.IsNativeMode)
-	masterMap[rootConfigName]["version"] = fmt.Sprintf("v%s", shared.RocketPoolVersion) // Update the version with the current Smartnode version
+	masterMap[rootConfigName]["version"] = fmt.Sprintf("v%s", shared.RocketPoolVersion()) // Update the version with the currentSmart Node version
 
 	// Serialize the subconfigs
 	for name, subconfig := range cfg.GetSubconfigs() {
@@ -780,7 +891,7 @@ func (cfg *RocketPoolConfig) Deserialize(masterMap map[string]map[string]string)
 	// Upgrade the config to the latest version
 	err := migration.UpdateConfig(masterMap)
 	if err != nil {
-		return fmt.Errorf("error upgrading configuration to v%s: %w", shared.RocketPoolVersion, err)
+		return fmt.Errorf("error upgrading configuration to v%s: %w", shared.RocketPoolVersion(), err)
 	}
 
 	// Get the network
@@ -789,8 +900,8 @@ func (cfg *RocketPoolConfig) Deserialize(masterMap map[string]map[string]string)
 	if exists {
 		networkString, exists := smartnodeConfig[cfg.Smartnode.Network.ID]
 		if exists {
-			valueType := reflect.TypeOf(networkString)
-			paramType := reflect.TypeOf(network)
+			valueType := reflect.TypeFor[string]()
+			paramType := reflect.TypeFor[config.Network]()
 			if !valueType.ConvertibleTo(paramType) {
 				return fmt.Errorf("can't get default network: value type %s cannot be converted to parameter type %s", valueType.Name(), paramType.Name())
 			}
@@ -923,6 +1034,14 @@ func (cfg *RocketPoolConfig) ConsensusClientApiUrl() (string, error) {
 	return cCfg.(config.ExternalConsensusConfig).GetApiUrl(), nil
 }
 
+func stripScheme(url string) string {
+	idx := strings.Index(url, "://")
+	if idx != -1 {
+		url = url[idx+3:]
+	}
+	return url
+}
+
 // Used by text/template to format validator.yml
 func (cfg *RocketPoolConfig) ConsensusClientRpcUrl() (string, error) {
 	// Check if Rescue Node is in-use
@@ -945,8 +1064,8 @@ func (cfg *RocketPoolConfig) ConsensusClientRpcUrl() (string, error) {
 		return fmt.Sprintf("%s:%d", Eth2ContainerName, cfg.Prysm.RpcPort.Value), nil
 	}
 
-	// Use the external RPC endpoint
-	return cfg.ExternalPrysm.JsonRpcUrl.Value.(string), nil
+	// Use the external RPC endpoint, but strip any scheme
+	return stripScheme(cfg.ExternalPrysm.JsonRpcUrl.Value.(string)), nil
 }
 
 // Used by text/template to format validator.yml
@@ -974,7 +1093,7 @@ func (cfg *RocketPoolConfig) FallbackCcRpcUrl() string {
 		return ""
 	}
 
-	return cfg.FallbackPrysm.JsonRpcUrl.Value.(string)
+	return stripScheme(cfg.FallbackPrysm.JsonRpcUrl.Value.(string))
 }
 
 // Used by text/template to format validator.yml
@@ -1002,11 +1121,11 @@ func (cfg *RocketPoolConfig) CustomGraffiti() (string, error) {
 }
 
 // Used by text/template to format validator.yml
-// Only returns the the prefix
+// Only returns The prefix
 func (cfg *RocketPoolConfig) GraffitiPrefix() string {
 	// Graffiti
 	identifier := ""
-	versionString := fmt.Sprintf("v%s", shared.RocketPoolVersion)
+	versionString := fmt.Sprintf("v%s", shared.RocketPoolVersion())
 	if len(versionString) < 8 {
 		var ecInitial string
 		if !cfg.ExecutionClientLocal() {
@@ -1042,9 +1161,54 @@ func (cfg *RocketPoolConfig) Graffiti() (string, error) {
 	return fmt.Sprintf("%s (%s)", prefix, customGraffiti), nil
 }
 
+func (cfg *RocketPoolConfig) SuggestedBlockGasLimit() string {
+	if cfg.ConsensusClientLocal() {
+		return cfg.ConsensusCommon.SuggestedBlockGasLimit.Value.(string)
+	}
+
+	cc, _ := cfg.GetSelectedConsensusClient()
+	switch cc {
+	case config.ConsensusClient_Lighthouse:
+		return cfg.ExternalLighthouse.SuggestedBlockGasLimit.Value.(string)
+	case config.ConsensusClient_Lodestar:
+		return cfg.ExternalLodestar.SuggestedBlockGasLimit.Value.(string)
+	case config.ConsensusClient_Nimbus:
+		return cfg.ExternalNimbus.SuggestedBlockGasLimit.Value.(string)
+	case config.ConsensusClient_Prysm:
+		return cfg.ExternalPrysm.SuggestedBlockGasLimit.Value.(string)
+	case config.ConsensusClient_Teku:
+		return cfg.ExternalTeku.SuggestedBlockGasLimit.Value.(string)
+	default:
+		return ""
+	}
+
+}
+
+func (cfg *RocketPoolConfig) KeymanagerApiPort() uint16 {
+	if cfg.ConsensusClientLocal() {
+		return cfg.ConsensusCommon.KeymanagerApiPort.Value.(uint16)
+	}
+
+	cc, _ := cfg.GetSelectedConsensusClient()
+	switch cc {
+	case config.ConsensusClient_Lighthouse:
+		return cfg.ExternalLighthouse.KeymanagerApiPort.Value.(uint16)
+	case config.ConsensusClient_Lodestar:
+		return cfg.ExternalLodestar.KeymanagerApiPort.Value.(uint16)
+	case config.ConsensusClient_Nimbus:
+		return cfg.ExternalNimbus.KeymanagerApiPort.Value.(uint16)
+	case config.ConsensusClient_Prysm:
+		return cfg.ExternalPrysm.KeymanagerApiPort.Value.(uint16)
+	case config.ConsensusClient_Teku:
+		return cfg.ExternalTeku.KeymanagerApiPort.Value.(uint16)
+	default:
+		return 5062
+	}
+}
+
 // Used by text/template to format validator.yml
 func (cfg *RocketPoolConfig) RocketPoolVersion() string {
-	return shared.RocketPoolVersion
+	return shared.RocketPoolVersion()
 }
 
 // Used by text/template to format validator.yml
@@ -1114,20 +1278,30 @@ func (cfg *RocketPoolConfig) VcAdditionalFlags() (string, error) {
 
 // Used by text/template to format validator.yml
 func (cfg *RocketPoolConfig) FeeRecipientFile() string {
-	return FeeRecipientFilename
+	return GlobalFeeRecipientFilename
 }
 
-// Used by text/template to format validator.yml
-func (cfg *RocketPoolConfig) MevBoostUrl() string {
-	if !cfg.EnableMevBoost.Value.(bool) {
-		return ""
-	}
+// Used by text/template to check if any PBS client (MEV-Boost or Commit-Boost) is enabled
+func (cfg *RocketPoolConfig) IsPbsEnabled() bool {
+	return cfg.EnableMevBoost.Value.(bool) || cfg.EnableCommitBoost.Value.(bool)
+}
 
-	if cfg.MevBoost.Mode.Value == config.Mode_Local {
-		return fmt.Sprintf("http://%s:%d", MevBoostContainerName, cfg.MevBoost.Port.Value)
-	}
+// Used by text/template to format mev-boost.yml
+func (cfg *RocketPoolConfig) PbsUrl() string {
+	if cfg.EnableMevBoost.Value.(bool) {
 
-	return cfg.MevBoost.ExternalUrl.Value.(string)
+		if cfg.MevBoost.Mode.Value == config.Mode_Local {
+			return fmt.Sprintf("http://%s:%d", MevBoostContainerName, cfg.MevBoost.Port.Value)
+		}
+		return cfg.MevBoost.ExternalUrl.Value.(string)
+	}
+	if cfg.EnableCommitBoost.Value.(bool) {
+		if cfg.CommitBoost.Mode.Value == config.Mode_Local {
+			return fmt.Sprintf("http://%s:%d", CommitBoostContainerName, cfg.CommitBoost.Port.Value)
+		}
+		return cfg.CommitBoost.ExternalUrl.Value.(string)
+	}
+	return ""
 }
 
 // Gets the tag of the ec container
@@ -1170,6 +1344,11 @@ func (cfg *RocketPoolConfig) GetECStopSignal() (string, error) {
 	}
 
 	return "", fmt.Errorf("Unknown Execution Client %s", string(cfg.ExecutionClient.Value.(config.ExecutionClient)))
+}
+
+func (cfg *RocketPoolConfig) GetNodeOpenPorts() string {
+	port := cfg.Smartnode.APIPort.Value.(uint16)
+	return fmt.Sprintf("\"127.0.0.1:%d:%d/tcp\"", port, port)
 }
 
 // Gets the stop signal of the ec container
@@ -1225,6 +1404,12 @@ func (cfg *RocketPoolConfig) GetECAdditionalFlags() (string, error) {
 	return "", fmt.Errorf("Unknown Execution Client %s", string(cfg.ExecutionClient.Value.(config.ExecutionClient)))
 }
 
+// IsIPv6Enabled returns true if IPv6 support is enabled for the Docker network.
+// Used by text/template to conditionally add enable_ipv6 to compose network definitions.
+func (cfg *RocketPoolConfig) IsIPv6Enabled() bool {
+	return cfg.EnableIPv6.Value.(bool)
+}
+
 // Used by text/template to format eth1.yml
 func (cfg *RocketPoolConfig) GetExternalIp() string {
 	// Get the external IP address
@@ -1235,10 +1420,28 @@ func (cfg *RocketPoolConfig) GetExternalIp() string {
 		return ""
 	}
 
-	if ip.To4() == nil {
-		fmt.Println("Warning: external IP address is v6; if you're using Nimbus or Besu, it may have trouble finding peers:")
+	if ip.To4() == nil && !cfg.IsIPv6Enabled() {
+		fmt.Println("Warning: your external IP address is IPv6. If you haven't enabled IPv6 support in your configuration, your node may have trouble finding peers. Run 'rocketpool service config' and enable IPv6 under 'Smart Node and TX Fees'.")
 	}
 
+	return ip.String()
+}
+
+// Used by text/template to format eth2.yml when IPv6 is enabled.
+// Lodestar requires --enr.ip6 and Teku requires --p2p-advertised-ips to advertise IPv6 in their ENR.
+// Returns the external IPv6 address, or empty string if unavailable.
+func (cfg *RocketPoolConfig) GetExternalIpv6() string {
+	consensusConfig := externalip.ConsensusConfig{Timeout: 3 * time.Second}
+	ip6Consensus := externalip.DefaultConsensus(&consensusConfig, nil)
+	err := ip6Consensus.UseIPProtocol(6)
+	if err != nil {
+		return ""
+	}
+
+	ip, err := ip6Consensus.ExternalIP()
+	if err != nil || ip.To4() != nil {
+		return ""
+	}
 	return ip.String()
 }
 
@@ -1363,6 +1566,15 @@ func (cfg *RocketPoolConfig) GetPrometheusOpenPorts() string {
 	return fmt.Sprintf("\"%s\"", portMode.DockerPortMapping(cfg.Prometheus.Port.Value.(uint16)))
 }
 
+// Used by text/template to format grafana.yml
+func (cfg *RocketPoolConfig) GetGrafanaOpenPorts() string {
+	portMode := cfg.Grafana.OpenPort.Value.(config.RPCMode)
+	if !portMode.Open() {
+		return ""
+	}
+	return fmt.Sprintf("\"%s\"", portMode.DockerPortMapping(cfg.Grafana.Port.Value.(uint16)))
+}
+
 // Used by text/template to format mev-boost.yml
 func (cfg *RocketPoolConfig) GetMevBoostOpenPorts() string {
 	portMode := cfg.MevBoost.OpenRpcPort.Value.(config.RPCMode)
@@ -1373,9 +1585,56 @@ func (cfg *RocketPoolConfig) GetMevBoostOpenPorts() string {
 	return fmt.Sprintf("\"%s\"", portMode.DockerPortMapping(port))
 }
 
-// The the title for the config
+// Used by text/template to format commit-boost.yml
+func (cfg *RocketPoolConfig) GetCommitBoostOpenPorts() string {
+	portMode := cfg.CommitBoost.OpenRpcPort.Value.(config.RPCMode)
+	if !portMode.Open() {
+		return ""
+	}
+	port := cfg.CommitBoost.Port.Value.(uint16)
+	return fmt.Sprintf("\"%s\"", portMode.DockerPortMapping(port))
+}
+
+// TODO: remove this code on the next Prysm release - so users can still rollback from 6.0.4
+// Used by text/template to select an entrypoint based on which consensus client is used.
+func (cfg *RocketPoolConfig) GetEth2Entrypoint() string {
+	if client, _ := cfg.GetSelectedConsensusClient(); client == config.ConsensusClient_Prysm {
+		return "bash"
+	}
+	return "sh"
+}
+
+// The title for the config
 func (cfg *RocketPoolConfig) GetConfigTitle() string {
 	return cfg.Title
+}
+
+func (cfg *RocketPoolConfig) WarnUpdateSuggestedSettings() {
+	gasLimitSettings := map[string]*config.Parameter{
+		"consensus": &cfg.ConsensusCommon.SuggestedBlockGasLimit,
+		"execution": &cfg.ExecutionCommon.SuggestedBlockGasLimit,
+	}
+
+	for name, target := range gasLimitSettings {
+		if target.Value == "" {
+			continue
+		}
+
+		blockGasLimit, err := strconv.Atoi(target.Value.(string))
+		if err != nil {
+			target.Value = ""
+			continue
+		}
+		if blockGasLimit < coreDevsSuggestedGasLimit {
+			fmt.Fprintf(
+				os.Stderr,
+				"Warning: Your %s block gas limit setting is currently '%d'. The maintainers suggest changing it to use the updated consensus client value '%d'\n",
+				name,
+				blockGasLimit,
+				coreDevsSuggestedGasLimit,
+			)
+		}
+	}
 }
 
 // Update the default settings for all overwrite-on-upgrade parameters
@@ -1424,10 +1683,7 @@ func (cfg *RocketPoolConfig) GetChanges(oldConfig *RocketPoolConfig) (map[string
 	}
 
 	// Check if the network has changed
-	changeNetworks := false
-	if oldConfig.Smartnode.Network.Value != cfg.Smartnode.Network.Value {
-		changeNetworks = true
-	}
+	changeNetworks := oldConfig.Smartnode.Network.Value != cfg.Smartnode.Network.Value
 
 	// Return everything
 	return changedSettings, totalAffectedContainers, changeNetworks
@@ -1461,11 +1717,6 @@ func (cfg *RocketPoolConfig) Validate() []string {
 		errors = append(errors, "You are using an externally-managed Execution client and a locally-managed Consensus client.\nThis configuration is not compatible with The Merge; please select either locally-managed or externally-managed for both the EC and CC.")
 	}
 
-	// Ensure there's a MEV-boost URL
-	if cfg.Smartnode.Network.Value == config.Network_Holesky || cfg.Smartnode.Network.Value == config.Network_Devnet {
-		// Disabled on Holesky
-		cfg.EnableMevBoost.Value = false
-	}
 	if !cfg.IsNativeMode && cfg.EnableMevBoost.Value == true {
 		switch cfg.MevBoost.Mode.Value.(config.Mode) {
 		case config.Mode_Local:
@@ -1481,6 +1732,29 @@ func (cfg *RocketPoolConfig) Validate() []string {
 			}
 		default:
 			errors = append(errors, "You do not have a MEV-Boost mode configured. You must either select a mode in the `rocketpool service config` UI, or disable MEV-Boost.\nNote that MEV-Boost will be required in a future update, at which point you can no longer disable it.")
+		}
+	}
+
+	// Check if both MEV-Boost and Commit-Boost are enabled at the same time
+	if cfg.EnableMevBoost.Value == true && cfg.EnableCommitBoost.Value == true {
+		errors = append(errors, "You have both MEV-Boost and Commit-Boost enabled. Please disable one of them — only one PBS (Proposer-Builder Separation) client can be active at a time.")
+	}
+
+	// Validate Commit-Boost settings
+	if !cfg.IsNativeMode && cfg.EnableCommitBoost.Value == true {
+		switch cfg.CommitBoost.Mode.Value.(config.Mode) {
+		case config.Mode_Local:
+			relayInfo := cfg.CommitBoost.GetEnabledPbsRelayInfo()
+			customRelays := cfg.CommitBoost.GetCustomRelays()
+			if len(relayInfo) == 0 && len(customRelays) == 0 {
+				errors = append(errors, "You have Commit-Boost enabled in local mode but don't have any relays enabled and no custom relays set. Please enable at least one relay or add a custom relay URL.")
+			}
+		case config.Mode_External:
+			if cfg.ExecutionClientMode.Value.(config.Mode) == config.Mode_Local && cfg.CommitBoost.ExternalUrl.Value.(string) == "" {
+				errors = append(errors, "You have Commit-Boost enabled in external mode but don't have a URL set. Please enter the external Commit-Boost server URL to use it.")
+			}
+		default:
+			errors = append(errors, "You do not have a Commit-Boost mode configured. You must either select a mode in the `rocketpool service config` UI, or disable Commit-Boost.")
 		}
 	}
 
@@ -1522,7 +1796,17 @@ func (cfg *RocketPoolConfig) Validate() []string {
 	portMap, errors = addAndCheckForDuplicate(portMap, cfg.MevBoost.Port, errors)
 	portMap, errors = addAndCheckForDuplicate(portMap, cfg.Prometheus.Port, errors)
 	portMap, errors = addAndCheckForDuplicate(portMap, cfg.Alertmanager.Port, errors)
-	_, errors = addAndCheckForDuplicate(portMap, cfg.Lighthouse.P2pQuicPort, errors)
+	if cfg.ConsensusClient.Value.(config.ConsensusClient) == config.ConsensusClient_Lighthouse {
+		_, errors = addAndCheckForDuplicate(portMap, cfg.Lighthouse.P2pQuicPort, errors)
+	}
+	if cfg.ConsensusClient.Value.(config.ConsensusClient) == config.ConsensusClient_Lodestar {
+		_, errors = addAndCheckForDuplicate(portMap, cfg.Lodestar.P2pQuicPort, errors)
+	}
+	if cfg.ConsensusClient.Value.(config.ConsensusClient) == config.ConsensusClient_Teku {
+		portMap, errors = addAndCheckForDuplicate(portMap, cfg.Teku.P2pIpv6Port, errors)
+		portMap, errors = addAndCheckForDuplicate(portMap, cfg.Teku.P2pQuicPort, errors)
+		_, errors = addAndCheckForDuplicate(portMap, cfg.Teku.P2pQuicIpv6Port, errors)
+	}
 
 	return errors
 }
@@ -1534,9 +1818,8 @@ func addAndCheckForDuplicate(portMap map[interface{}]bool, param config.Paramete
 	}
 	if portMap[port] {
 		return portMap, append(errors, fmt.Sprintf("Port %s for %s is already in use", port, param.Name))
-	} else {
-		portMap[port] = true
 	}
+	portMap[port] = true
 	return portMap, errors
 
 }

@@ -5,16 +5,17 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
+
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
-	"github.com/urfave/cli"
 )
 
-func sendMessage(c *cli.Context, toAddressOrENS string, message []byte) error {
+func sendMessage(toAddressOrENS string, message []byte, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -45,13 +46,13 @@ func sendMessage(c *cli.Context, toAddressOrENS string, message []byte) error {
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canSend.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canSend.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm(fmt.Sprintf("Are you sure you want to send a message to %s?", toAddressString))) {
+	if prompt.Declined(yes, "Are you sure you want to send a message to %s?", toAddressString) {
 		fmt.Println("Cancelled.")
 		return nil
 	}

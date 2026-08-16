@@ -4,16 +4,17 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/dao/protocol"
-	"github.com/rocket-pool/rocketpool-go/types"
-	"github.com/rocket-pool/rocketpool-go/utils/state"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/protocol"
+	"github.com/rocket-pool/smartnode/bindings/types"
+	"github.com/rocket-pool/smartnode/bindings/utils/state"
+
+	"github.com/urfave/cli/v3"
+
 	"github.com/rocket-pool/smartnode/shared/services"
-	"github.com/rocket-pool/smartnode/shared/services/beacon"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/urfave/cli"
 )
 
 type challengeInfo struct {
@@ -27,7 +28,7 @@ type proposalInfo struct {
 	Challenges map[uint64]*challengeInfo
 }
 
-func getClaimableBonds(c *cli.Context) (*api.PDAOGetClaimableBondsResponse, error) {
+func getClaimableBonds(c *cli.Command) (*api.PDAOGetClaimableBondsResponse, error) {
 	// Get services
 	w, err := services.GetWallet(c)
 	if err != nil {
@@ -277,23 +278,4 @@ func isRewardedIndex(defeatIndex uint64, nodeIndex uint64) bool {
 		}
 	}
 	return false
-}
-
-func getElBlockForTimestamp(bc beacon.Client, beaconCfg beacon.Eth2Config, creationTime time.Time) (*big.Int, error) {
-	// Get the slot number the first proposal was created on
-	genesisTime := time.Unix(int64(beaconCfg.GenesisTime), 0)
-	secondsPerSlot := time.Second * time.Duration(beaconCfg.SecondsPerSlot)
-	startSlot := uint64(creationTime.Sub(genesisTime) / secondsPerSlot)
-
-	// Get the Beacon block for the slot
-	block, exists, err := bc.GetBeaconBlock(fmt.Sprint(startSlot))
-	if err != nil {
-		return nil, fmt.Errorf("error getting Beacon block at slot %d: %w", startSlot, err)
-	}
-	if !exists {
-		return nil, fmt.Errorf("Beacon block at slot %d was missing", startSlot)
-	}
-
-	// Get the EL block for this slot
-	return big.NewInt(int64(block.ExecutionBlockNumber)), nil
 }

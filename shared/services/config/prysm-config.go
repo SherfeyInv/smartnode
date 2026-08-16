@@ -5,10 +5,10 @@ import (
 )
 
 const (
-	prysmBnTest             string = "rocketpool/prysm:v5.1.0"
-	prysmBnProd             string = "rocketpool/prysm:v5.1.0"
-	prysmVcTest             string = "rocketpool/prysm:v5.1.0"
-	prysmVcProd             string = "rocketpool/prysm:v5.1.0"
+	prysmBnTest             string = "gcr.io/offchainlabs/prysm/beacon-chain:v7.1.8"
+	prysmBnProd             string = "gcr.io/offchainlabs/prysm/beacon-chain:v7.1.8"
+	prysmVcTest             string = "gcr.io/offchainlabs/prysm/validator:v7.1.8"
+	prysmVcProd             string = "gcr.io/offchainlabs/prysm/validator:v7.1.8"
 	defaultPrysmRpcPort     uint16 = 5053
 	defaultPrysmOpenRpcPort string = string(config.RPC_Closed)
 	defaultPrysmMaxPeers    uint16 = 70
@@ -30,6 +30,9 @@ type PrysmConfig struct {
 	// Toggle for forwarding the RPC API outside of Docker
 	OpenRpcPort config.Parameter `yaml:"openRpcPort,omitempty"`
 
+	// The port to use for gossip traffic using the QUIC protocol
+	P2pQuicPort config.Parameter `yaml:"p2pQuicPort,omitempty"`
+
 	// The Docker Hub tag for the Prysm BN
 	BnContainerTag config.Parameter `yaml:"bnContainerTag,omitempty"`
 
@@ -42,6 +45,9 @@ type PrysmConfig struct {
 	// Custom command line flags for the VC
 	AdditionalVcFlags config.Parameter `yaml:"additionalVcFlags,omitempty"`
 }
+
+// Type assertion for PrysmConfig
+var _ config.ConsensusConfig = &PrysmConfig{}
 
 // Generates a new Prysm configuration
 func NewPrysmConfig(cfg *RocketPoolConfig) *PrysmConfig {
@@ -86,6 +92,17 @@ func NewPrysmConfig(cfg *RocketPoolConfig) *PrysmConfig {
 			Options:            rpcPortModes,
 		},
 
+		P2pQuicPort: config.Parameter{
+			ID:                 P2pQuicPortID,
+			Name:               "P2P QUIC Port",
+			Description:        "The port to use for P2P (blockchain) traffic using the QUIC protocol.",
+			Type:               config.ParameterType_Uint16,
+			Default:            map[config.Network]interface{}{config.Network_All: defaultP2pQuicPort},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2},
+			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
+		},
+
 		BnContainerTag: config.Parameter{
 			ID:          "bnContainerTag",
 			Name:        "Beacon Node Container Tag",
@@ -94,7 +111,7 @@ func NewPrysmConfig(cfg *RocketPoolConfig) *PrysmConfig {
 			Default: map[config.Network]interface{}{
 				config.Network_Mainnet: prysmBnProd,
 				config.Network_Devnet:  prysmBnTest,
-				config.Network_Holesky: prysmBnTest,
+				config.Network_Testnet: prysmBnTest,
 			},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2},
 			CanBeBlank:         false,
@@ -109,7 +126,7 @@ func NewPrysmConfig(cfg *RocketPoolConfig) *PrysmConfig {
 			Default: map[config.Network]interface{}{
 				config.Network_Mainnet: prysmVcProd,
 				config.Network_Devnet:  prysmVcTest,
-				config.Network_Holesky: prysmVcTest,
+				config.Network_Testnet: prysmVcTest,
 			},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
 			CanBeBlank:         false,
@@ -119,7 +136,7 @@ func NewPrysmConfig(cfg *RocketPoolConfig) *PrysmConfig {
 		AdditionalBnFlags: config.Parameter{
 			ID:                 "additionalBnFlags",
 			Name:               "Additional Beacon Node Flags",
-			Description:        "Additional custom command line flags you want to pass Prysm's Beacon Node, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass Prysm's Beacon Node, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2},
@@ -130,7 +147,7 @@ func NewPrysmConfig(cfg *RocketPoolConfig) *PrysmConfig {
 		AdditionalVcFlags: config.Parameter{
 			ID:                 "additionalVcFlags",
 			Name:               "Additional Validator Client Flags",
-			Description:        "Additional custom command line flags you want to pass Prysm's Validator Client, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass Prysm's Validator Client, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
@@ -144,6 +161,7 @@ func NewPrysmConfig(cfg *RocketPoolConfig) *PrysmConfig {
 func (cfg *PrysmConfig) GetParameters() []*config.Parameter {
 	return []*config.Parameter{
 		&cfg.MaxPeers,
+		&cfg.P2pQuicPort,
 		&cfg.RpcPort,
 		&cfg.OpenRpcPort,
 		&cfg.BnContainerTag,
@@ -173,7 +191,7 @@ func (cfg *PrysmConfig) GetName() string {
 	return "Prysm"
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *PrysmConfig) GetConfigTitle() string {
 	return cfg.Title
 }

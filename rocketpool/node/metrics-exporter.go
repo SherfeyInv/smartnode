@@ -1,20 +1,24 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/urfave/cli/v3"
+
 	"github.com/rocket-pool/smartnode/rocketpool/node/collectors"
+	log "github.com/rocket-pool/smartnode/shared/logger"
 	"github.com/rocket-pool/smartnode/shared/services"
-	"github.com/rocket-pool/smartnode/shared/utils/log"
-	"github.com/urfave/cli"
 )
 
-func runMetricsServer(c *cli.Context, logger log.ColorLogger, stateLocker *collectors.StateLocker) error {
+func runMetricsServer(ctx context.Context, c *cli.Command, logger log.ColorLogger, stateLocker *collectors.StateLocker) error {
 
 	// Get services
 	cfg, err := services.GetConfig(c)
@@ -37,7 +41,7 @@ func runMetricsServer(c *cli.Context, logger log.ColorLogger, stateLocker *colle
 	if err != nil {
 		return err
 	}
-	s, err := services.GetSnapshotDelegation(c)
+	reg, err := services.GetRocketSignerRegistry(c)
 	if err != nil {
 		return err
 	}
@@ -66,6 +70,8 @@ func runMetricsServer(c *cli.Context, logger log.ColorLogger, stateLocker *colle
 	trustedNodeCollector := collectors.NewTrustedNodeCollector(rp, bc, nodeAccount.Address, cfg, stateLocker)
 	beaconCollector := collectors.NewBeaconCollector(rp, bc, ec, nodeAccount.Address, stateLocker)
 	smoothingPoolCollector := collectors.NewSmoothingPoolCollector(rp, ec, stateLocker)
+	governanceCollector := collectors.NewGovernanceCollector(rp)
+	versionUpdateCollector := collectors.NewVersionUpdateCollector(logger.Printlnf)
 
 	// Set up Prometheus
 	registry := prometheus.NewRegistry()
@@ -78,27 +84,35 @@ func runMetricsServer(c *cli.Context, logger log.ColorLogger, stateLocker *colle
 	registry.MustRegister(trustedNodeCollector)
 	registry.MustRegister(beaconCollector)
 	registry.MustRegister(smoothingPoolCollector)
+	registry.MustRegister(governanceCollector)
+	registry.MustRegister(versionUpdateCollector)
 
 	// Set up snapshot checking if enabled
-	votingId := cfg.Smartnode.GetVotingSnapshotID()
-	if s != nil {
-		votingDelegate, err := s.Delegation(nil, nodeAccount.Address, votingId)
+	if cfg.Smartnode.GetRocketSignerRegistryAddress() != "" {
+		signallingAddress, err := reg.NodeToSigner(&bind.CallOpts{}, nodeAccount.Address)
 		if err != nil {
-			return fmt.Errorf("Error getting node delegate: %w", err)
+			logger.Printlnf("Error getting the signalling address: %w", err)
+			// Set signallingAddress to blank address instead of erroring out of the task loop.
+			signallingAddress = common.Address{}
 		}
-		snapshotCollector := collectors.NewSnapshotCollector(rp, cfg, nodeAccount.Address, votingDelegate)
+		snapshotCollector := collectors.NewSnapshotCollector(rp, cfg, ec, bc, reg, nodeAccount.Address, signallingAddress)
 		registry.MustRegister(snapshotCollector)
+
 	}
 
 	// Start the HTTP server
 	handler := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
-	metricsAddress := c.GlobalString("metricsAddress")
-	metricsPort := c.GlobalUint("metricsPort")
+	metricsAddress := c.Root().String("metricsAddress")
+	metricsPort := uint(c.Root().Uint64("metricsPort"))
+	if metricsPort == 0 {
+		metricsPort = uint(cfg.NodeMetricsPort.Value.(uint16))
+	}
 	logger.Printlnf("Starting metrics exporter on %s:%d.", metricsAddress, metricsPort)
 	metricsPath := "/metrics"
-	http.Handle(metricsPath, handler)
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html>
+	mux := http.NewServeMux()
+	mux.Handle(metricsPath, handler)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		_, err := w.Write([]byte(`<html>
             <head><title>Rocket Pool Metrics Exporter</title></head>
             <body>
             <h1>Rocket Pool Metrics Exporter</h1>
@@ -106,9 +120,21 @@ func runMetricsServer(c *cli.Context, logger log.ColorLogger, stateLocker *colle
             </body>
             </html>`,
 		))
+		if err != nil {
+			logger.Printlnf("Error writing metrics exporter HTML: %v", err)
+		}
 	})
-	err = http.ListenAndServe(fmt.Sprintf("%s:%d", metricsAddress, metricsPort), nil)
-	if err != nil {
+	srv := &http.Server{
+		Addr:    fmt.Sprintf("%s:%d", metricsAddress, metricsPort),
+		Handler: mux,
+	}
+
+	go func() {
+		<-ctx.Done()
+		_ = srv.Shutdown(context.Background())
+	}()
+
+	if err = srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("Error running HTTP server: %w", err)
 	}
 

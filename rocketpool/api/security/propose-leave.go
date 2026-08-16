@@ -1,17 +1,17 @@
 package security
 
 import (
-	"fmt"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 
-	"github.com/rocket-pool/rocketpool-go/dao/security"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/security"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canProposeLeave(c *cli.Context) (*api.SecurityCanProposeLeaveResponse, error) {
+func canProposeLeave(c *cli.Command) (*api.SecurityCanProposeLeaveResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeSecurityMember(c); err != nil {
@@ -53,25 +53,21 @@ func canProposeLeave(c *cli.Context) (*api.SecurityCanProposeLeaveResponse, erro
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := security.EstimateRequestLeaveGas(rp, opts)
+	gasLimits, err := security.EstimateRequestLeaveGas(rp, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	// Update & return response
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return &response, nil
 
 }
 
-func proposeLeave(c *cli.Context) (*api.SecurityProposeLeaveResponse, error) {
+func proposeLeave(c *cli.Command, opts *bind.TransactOpts) (*api.SecurityProposeLeaveResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeSecurityMember(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -81,18 +77,6 @@ func proposeLeave(c *cli.Context) (*api.SecurityProposeLeaveResponse, error) {
 
 	// Response
 	response := api.SecurityProposeLeaveResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Submit proposal
 	hash, err := security.RequestLeave(rp, opts)

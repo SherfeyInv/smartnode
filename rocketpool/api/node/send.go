@@ -1,22 +1,26 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/big"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/tokens"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/erc20"
+	"github.com/rocket-pool/smartnode/bindings/tokens"
+	"github.com/rocket-pool/smartnode/bindings/transactions"
+	"github.com/rocket-pool/smartnode/shared/math"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canNodeSend(c *cli.Context, amountWei *big.Int, token string, to common.Address) (*api.CanNodeSendResponse, error) {
+func canNodeSend(c *cli.Command, amountRaw float64, token string, to common.Address) (*api.CanNodeSendResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -79,6 +83,10 @@ func canNodeSend(c *cli.Context, amountWei *big.Int, token string, to common.Add
 	if strings.HasPrefix(token, "0x") {
 		tokenAddress := common.HexToAddress(token)
 
+		if bytes.Equal(to.Bytes(), tokenAddress.Bytes()) {
+			return nil, fmt.Errorf("sending tokens to the same address as the token is prohibited for safety")
+		}
+
 		// Error out if using one of the well-known ones
 		if tokenAddress == *rplContract.Address {
 			return nil, fmt.Errorf("sending RPL via the token address is prohibited for safety; please use 'rpl' as the token to send instead of its address")
@@ -91,10 +99,12 @@ func canNodeSend(c *cli.Context, amountWei *big.Int, token string, to common.Add
 		}
 
 		// Create the ERC20 binding
-		contract, err := eth.NewErc20Contract(tokenAddress, ec, nil)
+		contract, err := erc20.NewErc20Contract(tokenAddress, ec, nil)
 		if err != nil {
 			return nil, fmt.Errorf("error creating ERC20 contract binding: %w", err)
 		}
+
+		amountWei := math.EthToWeiWithDecimals(amountRaw, contract.Decimals)
 		response.TokenName = contract.Name
 		response.TokenSymbol = contract.Symbol
 
@@ -103,32 +113,34 @@ func canNodeSend(c *cli.Context, amountWei *big.Int, token string, to common.Add
 		if err != nil {
 			return nil, fmt.Errorf("error getting ERC20 balance: %w", err)
 		}
-		response.Balance = balance
+
+		response.Balance = math.WeiToEthWithDecimals(balance, contract.Decimals)
 		response.InsufficientBalance = (amountWei.Cmp(balance) > 0)
 
 		// Get the gas info
-		gasInfo, err := contract.EstimateTransferGas(to, amountWei, opts)
+		gasLimits, err := contract.EstimateTransferGas(to, amountWei, opts)
 		if err != nil {
 			return nil, err
 		}
-		response.GasInfo = gasInfo
+		response.GasLimits = gasLimits
 	} else {
 		// Handle well-known token types
+		amountWei := math.EthToWei(amountRaw)
+		var balanceWei *big.Int
 		switch token {
 		case "eth":
 
 			// Check node ETH balance
-			ethBalanceWei, err := ec.BalanceAt(context.Background(), nodeAccount.Address, nil)
+			balanceWei, err = ec.BalanceAt(context.Background(), nodeAccount.Address, nil)
 			if err != nil {
 				return nil, err
 			}
-			response.Balance = ethBalanceWei
-			response.InsufficientBalance = (amountWei.Cmp(ethBalanceWei) > 0)
-			gasInfo, err := eth.EstimateSendTransactionGas(ec, to, nil, false, opts)
+			response.InsufficientBalance = (amountWei.Cmp(balanceWei) > 0)
+			gasLimits, err := transactions.EstimateSendTransactionGas(ec, to, nil, false, opts)
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo = gasInfo
+			response.GasLimits = gasLimits
 
 		case "rpl":
 
@@ -137,17 +149,16 @@ func canNodeSend(c *cli.Context, amountWei *big.Int, token string, to common.Add
 				return nil, err
 			}
 			// Check node RPL balance
-			rplBalanceWei, err := tokens.GetRPLBalance(rp, nodeAccount.Address, nil)
+			balanceWei, err = tokens.GetRPLBalance(rp, nodeAccount.Address, nil)
 			if err != nil {
 				return nil, err
 			}
-			response.Balance = rplBalanceWei
-			response.InsufficientBalance = (amountWei.Cmp(rplBalanceWei) > 0)
-			gasInfo, err := tokens.EstimateTransferRPLGas(rp, to, amountWei, opts)
+			response.InsufficientBalance = (amountWei.Cmp(balanceWei) > 0)
+			gasLimits, err := tokens.EstimateTransferRPLGas(rp, to, amountWei, opts)
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo = gasInfo
+			response.GasLimits = gasLimits
 
 		case "fsrpl":
 
@@ -156,17 +167,16 @@ func canNodeSend(c *cli.Context, amountWei *big.Int, token string, to common.Add
 				return nil, err
 			}
 			// Check node fixed-supply RPL balance
-			fixedSupplyRplBalanceWei, err := tokens.GetFixedSupplyRPLBalance(rp, nodeAccount.Address, nil)
+			balanceWei, err = tokens.GetFixedSupplyRPLBalance(rp, nodeAccount.Address, nil)
 			if err != nil {
 				return nil, err
 			}
-			response.Balance = fixedSupplyRplBalanceWei
-			response.InsufficientBalance = (amountWei.Cmp(fixedSupplyRplBalanceWei) > 0)
-			gasInfo, err := tokens.EstimateTransferFixedSupplyRPLGas(rp, to, amountWei, opts)
+			response.InsufficientBalance = (amountWei.Cmp(balanceWei) > 0)
+			gasLimits, err := tokens.EstimateTransferFixedSupplyRPLGas(rp, to, amountWei, opts)
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo = gasInfo
+			response.GasLimits = gasLimits
 
 		case "reth":
 
@@ -175,19 +185,19 @@ func canNodeSend(c *cli.Context, amountWei *big.Int, token string, to common.Add
 				return nil, err
 			}
 			// Check node rETH balance
-			rethBalanceWei, err := tokens.GetRETHBalance(rp, nodeAccount.Address, nil)
+			balanceWei, err = tokens.GetRETHBalance(rp, nodeAccount.Address, nil)
 			if err != nil {
 				return nil, err
 			}
-			response.Balance = rethBalanceWei
-			response.InsufficientBalance = (amountWei.Cmp(rethBalanceWei) > 0)
-			gasInfo, err := tokens.EstimateTransferRETHGas(rp, to, amountWei, opts)
+			response.InsufficientBalance = (amountWei.Cmp(balanceWei) > 0)
+			gasLimits, err := tokens.EstimateTransferRETHGas(rp, to, amountWei, opts)
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo = gasInfo
+			response.GasLimits = gasLimits
 
 		}
+		response.Balance = math.WeiToEth(balanceWei)
 	}
 
 	// Update & return response
@@ -196,7 +206,7 @@ func canNodeSend(c *cli.Context, amountWei *big.Int, token string, to common.Add
 
 }
 
-func nodeSend(c *cli.Context, amountWei *big.Int, token string, to common.Address) (*api.NodeSendResponse, error) {
+func nodeSend(c *cli.Command, amountRaw float64, token string, to common.Address, opts *bind.TransactOpts) (*api.NodeSendResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -218,25 +228,15 @@ func nodeSend(c *cli.Context, amountWei *big.Int, token string, to common.Addres
 	// Response
 	response := api.NodeSendResponse{}
 
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
-
 	// Handle explicit token addresses
 	if strings.HasPrefix(token, "0x") {
 		tokenAddress := common.HexToAddress(token)
-		contract, err := eth.NewErc20Contract(tokenAddress, ec, nil)
+		contract, err := erc20.NewErc20Contract(tokenAddress, ec, nil)
 		if err != nil {
 			return nil, fmt.Errorf("error creating ERC20 contract binding: %w", err)
 		}
+
+		amountWei := math.EthToWeiWithDecimals(amountRaw, contract.Decimals)
 
 		tx, err := contract.Transfer(to, amountWei, opts)
 		if err != nil {
@@ -244,13 +244,14 @@ func nodeSend(c *cli.Context, amountWei *big.Int, token string, to common.Addres
 		}
 		response.TxHash = tx.Hash()
 	} else {
+		amountWei := math.EthToWei(amountRaw)
 		// Handle token type
 		switch token {
 		case "eth":
 
 			// Transfer ETH
 			opts.Value = amountWei
-			hash, err := eth.SendTransaction(ec, to, w.GetChainID(), nil, false, opts)
+			hash, err := transactions.SendTransaction(ec, to, w.GetChainID(), nil, false, opts)
 			if err != nil {
 				return nil, err
 			}
@@ -295,6 +296,116 @@ func nodeSend(c *cli.Context, amountWei *big.Int, token string, to common.Addres
 			}
 			response.TxHash = hash
 
+		}
+	}
+
+	// Return response
+	return &response, nil
+
+}
+
+// nodeSendAllTokens sends the entire on-chain balance of the specified token to
+// the recipient, using the exact *big.Int balance to avoid float64 rounding
+// errors that would cause "transfer amount exceeds balance" failures.
+// ETH is not supported here; use nodeSend with a pre-computed amount instead.
+func nodeSendAllTokens(c *cli.Command, token string, to common.Address, opts *bind.TransactOpts) (*api.NodeSendResponse, error) {
+
+	// Get services
+	if err := services.RequireNodeWallet(c); err != nil {
+		return nil, err
+	}
+	w, err := services.GetWallet(c)
+	if err != nil {
+		return nil, err
+	}
+	ec, err := services.GetEthClient(c)
+	if err != nil {
+		return nil, err
+	}
+	rp, err := services.GetRocketPool(c)
+	if err != nil {
+		return nil, err
+	}
+
+	// Response
+	response := api.NodeSendResponse{}
+
+	// Get node account
+	nodeAccount, err := w.GetNodeAccount()
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle explicit token addresses
+	if strings.HasPrefix(token, "0x") {
+		tokenAddress := common.HexToAddress(token)
+		contract, err := erc20.NewErc20Contract(tokenAddress, ec, nil)
+		if err != nil {
+			return nil, fmt.Errorf("error creating ERC20 contract binding: %w", err)
+		}
+
+		balanceWei, err := contract.BalanceOf(nodeAccount.Address, nil)
+		if err != nil {
+			return nil, fmt.Errorf("error getting ERC20 balance: %w", err)
+		}
+
+		tx, err := contract.Transfer(to, balanceWei, opts)
+		if err != nil {
+			return nil, err
+		}
+		response.TxHash = tx.Hash()
+	} else {
+		switch token {
+		case "rpl":
+
+			// Get RocketStorage
+			if err := services.RequireRocketStorage(c); err != nil {
+				return nil, err
+			}
+			balanceWei, err := tokens.GetRPLBalance(rp, nodeAccount.Address, nil)
+			if err != nil {
+				return nil, err
+			}
+			hash, err := tokens.TransferRPL(rp, to, balanceWei, opts)
+			if err != nil {
+				return nil, err
+			}
+			response.TxHash = hash
+
+		case "fsrpl":
+
+			// Get RocketStorage
+			if err := services.RequireRocketStorage(c); err != nil {
+				return nil, err
+			}
+			balanceWei, err := tokens.GetFixedSupplyRPLBalance(rp, nodeAccount.Address, nil)
+			if err != nil {
+				return nil, err
+			}
+			hash, err := tokens.TransferFixedSupplyRPL(rp, to, balanceWei, opts)
+			if err != nil {
+				return nil, err
+			}
+			response.TxHash = hash
+
+		case "reth":
+
+			// Get RocketStorage
+			if err := services.RequireRocketStorage(c); err != nil {
+				return nil, err
+			}
+			balanceWei, err := tokens.GetRETHBalance(rp, nodeAccount.Address, nil)
+			if err != nil {
+				return nil, err
+			}
+			hash, err := tokens.TransferRETH(rp, to, balanceWei, opts)
+			if err != nil {
+				return nil, err
+			}
+			response.TxHash = hash
+
+		default:
+			return nil, fmt.Errorf("unsupported token '%s' for send-all; use 'eth' with an explicit amount", token)
 		}
 	}
 

@@ -3,17 +3,12 @@ package node
 import (
 	"fmt"
 	"strings"
-	"time"
 
-	"github.com/urfave/cli"
-
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/color"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
 )
-
-// Settings
-var ethClientRecentBlockThreshold, _ = time.ParseDuration("5m")
 
 func printClientStatus(status *api.ClientStatus, name string) {
 
@@ -47,10 +42,10 @@ func printSyncProgress(status *api.ClientManagerStatus, name string) {
 	printClientStatus(&status.FallbackClientStatus, fmt.Sprintf("fallback %s client", name))
 }
 
-func getSyncProgress(c *cli.Context) error {
+func getSyncProgress() error {
 
 	// Get RP client
-	rp := rocketpool.NewClientFromCtx(c)
+	rp := rocketpool.NewClient()
 	defer rp.Close()
 
 	// Get the config
@@ -71,11 +66,12 @@ func getSyncProgress(c *cli.Context) error {
 		return err
 	}
 	if !depositContractInfo.SufficientSync {
-		colorReset := "\033[0m"
-		colorYellow := "\033[33m"
-		fmt.Printf("%sYour execution client hasn't synced enough to determine if your execution and consensus clients are on the same network.\n", colorYellow)
-		fmt.Printf("To run this safety check, try again later when the execution client has made more sync progress.%s\n\n", colorReset)
-	} else if depositContractInfo.RPNetwork != depositContractInfo.BeaconNetwork ||
+		color.YellowPrintln("Your execution client hasn't synced enough to determine if your execution and consensus clients are on the same network.")
+		color.YellowPrintln("To run this safety check, try again later when the execution client has made more sync progress.")
+		fmt.Println()
+		return nil
+	}
+	if depositContractInfo.RPNetwork != depositContractInfo.BeaconNetwork ||
 		depositContractInfo.RPDepositContract != depositContractInfo.BeaconDepositContract {
 		cliutils.PrintDepositMismatchError(
 			depositContractInfo.RPNetwork,
@@ -83,10 +79,9 @@ func getSyncProgress(c *cli.Context) error {
 			depositContractInfo.RPDepositContract,
 			depositContractInfo.BeaconDepositContract)
 		return nil
-	} else {
-		fmt.Println("Your consensus client is on the correct network.")
-		fmt.Println()
 	}
+	fmt.Println("Your consensus client is on the correct network.")
+	fmt.Println()
 
 	// Get node status
 	status, err := rp.NodeSync()

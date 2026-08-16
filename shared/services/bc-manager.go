@@ -2,17 +2,19 @@ package services
 
 import (
 	"fmt"
+	"math/big"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/fatih/color"
-	"github.com/rocket-pool/rocketpool-go/types"
+
+	"github.com/rocket-pool/smartnode/bindings/types"
+	log "github.com/rocket-pool/smartnode/shared/logger"
 	"github.com/rocket-pool/smartnode/shared/services/beacon"
 	"github.com/rocket-pool/smartnode/shared/services/beacon/client"
 	"github.com/rocket-pool/smartnode/shared/services/config"
 	"github.com/rocket-pool/smartnode/shared/types/api"
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
-	"github.com/rocket-pool/smartnode/shared/utils/log"
 )
 
 const bnContainerName string = "eth2"
@@ -25,6 +27,23 @@ type BeaconClientManager struct {
 	primaryReady    bool
 	fallbackReady   bool
 	ignoreSyncCheck bool
+
+	// static, when non-nil, satisfies every public method of this manager
+	// directly from the provided client instead of dialling a live beacon
+	// node. It is set by NewStaticBeaconClientManager and used when the
+	// daemon is running in --network-state mode.
+	static beacon.Client
+}
+
+// NewStaticBeaconClientManager returns a BeaconClientManager whose public
+// methods all delegate to the provided beacon.Client. No network
+// connections are established.
+func NewStaticBeaconClientManager(static beacon.Client) *BeaconClientManager {
+	return &BeaconClientManager{
+		static:        static,
+		primaryReady:  true,
+		fallbackReady: false,
+	}
 }
 
 // This is a signature for a wrapped Beacon client function that only returns an error
@@ -182,6 +201,28 @@ func (m *BeaconClientManager) GetBeaconHead() (beacon.BeaconHead, error) {
 	return result.(beacon.BeaconHead), nil
 }
 
+// Get the Beacon State information
+func (m *BeaconClientManager) GetBeaconStateSSZ(slot uint64) (*beacon.BeaconStateSSZ, error) {
+	result, err := m.runFunction1(func(client beacon.Client) (interface{}, error) {
+		return client.GetBeaconStateSSZ(slot)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*beacon.BeaconStateSSZ), nil
+}
+
+// Get deneb beacon block by slot
+func (m *BeaconClientManager) GetBeaconBlockSSZ(slot uint64) (*beacon.BeaconBlockSSZ, bool, error) {
+	result1, result2, err := m.runFunction2(func(client beacon.Client) (interface{}, interface{}, error) {
+		return client.GetBeaconBlockSSZ(slot)
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return result1.(*beacon.BeaconBlockSSZ), result2.(bool), nil
+}
+
 // Get a validator's status by its index
 func (m *BeaconClientManager) GetValidatorStatusByIndex(index string, opts *beacon.ValidatorStatusOptions) (beacon.ValidatorStatus, error) {
 	result, err := m.runFunction1(func(client beacon.Client) (interface{}, error) {
@@ -202,6 +243,16 @@ func (m *BeaconClientManager) GetValidatorStatus(pubkey types.ValidatorPubkey, o
 		return beacon.ValidatorStatus{}, err
 	}
 	return result.(beacon.ValidatorStatus), nil
+}
+
+func (m *BeaconClientManager) GetAllValidators() ([]beacon.ValidatorStatus, error) {
+	result, err := m.runFunction1(func(client beacon.Client) (interface{}, error) {
+		return client.GetAllValidators()
+	})
+	if err != nil {
+		return []beacon.ValidatorStatus{}, err
+	}
+	return result.([]beacon.ValidatorStatus), nil
 }
 
 // Get the statuses of multiple validators by their pubkeys
@@ -308,11 +359,46 @@ func (m *BeaconClientManager) ChangeWithdrawalCredentials(validatorIndex string,
 	return nil
 }
 
+// Get the validator balances for a set of validators at a given slot, with backoff.
+func (m *BeaconClientManager) GetValidatorBalancesSafe(indices []string, opts *beacon.ValidatorStatusOptions) (map[string]*big.Int, error) {
+	result, err := m.runFunction1(func(client beacon.Client) (interface{}, error) {
+		return client.GetValidatorBalancesSafe(indices, opts)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(map[string]*big.Int), nil
+}
+
+// Get the validator balances for a set of validators at a given slot
+func (m *BeaconClientManager) GetValidatorBalances(indices []string, opts *beacon.ValidatorStatusOptions) (map[string]*big.Int, error) {
+	result, err := m.runFunction1(func(client beacon.Client) (interface{}, error) {
+		return client.GetValidatorBalances(indices, opts)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(map[string]*big.Int), nil
+}
+
 /// ==================
 /// Internal Functions
 /// ==================
 
 func (m *BeaconClientManager) CheckStatus() *api.ClientManagerStatus {
+
+	// In static mode we have no real beacon clients to probe; report the
+	// synthetic "primary is working and synced" status.
+	if m.static != nil {
+		return &api.ClientManagerStatus{
+			FallbackEnabled: false,
+			PrimaryClientStatus: api.ClientStatus{
+				IsWorking:    true,
+				IsSynced:     true,
+				SyncProgress: 1,
+			},
+		}
+	}
 
 	status := &api.ClientManagerStatus{
 		FallbackEnabled: m.fallbackBc != nil,
@@ -376,6 +462,13 @@ func checkBcStatus(client beacon.Client) api.ClientStatus {
 // Attempts to run a function progressively through each client until one succeeds or they all fail.
 func (m *BeaconClientManager) runFunction0(function bcFunction0) error {
 
+	// Delegate directly to the static backend when the manager is running in
+	// --network-state mode; there are no primary/fallback clients to route
+	// through.
+	if m.static != nil {
+		return function(m.static)
+	}
+
 	// Check if we can use the primary
 	if m.primaryReady {
 		// Try to run the function on the primary
@@ -418,6 +511,10 @@ func (m *BeaconClientManager) runFunction0(function bcFunction0) error {
 // Attempts to run a function progressively through each client until one succeeds or they all fail.
 func (m *BeaconClientManager) runFunction1(function bcFunction1) (interface{}, error) {
 
+	if m.static != nil {
+		return function(m.static)
+	}
+
 	// Check if we can use the primary
 	if m.primaryReady {
 		// Try to run the function on the primary
@@ -459,6 +556,10 @@ func (m *BeaconClientManager) runFunction1(function bcFunction1) (interface{}, e
 
 // Attempts to run a function progressively through each client until one succeeds or they all fail.
 func (m *BeaconClientManager) runFunction2(function bcFunction2) (interface{}, interface{}, error) {
+
+	if m.static != nil {
+		return function(m.static)
+	}
 
 	// Check if we can use the primary
 	if m.primaryReady {

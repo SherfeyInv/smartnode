@@ -3,24 +3,23 @@ package pdao
 import (
 	"fmt"
 
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
-	"github.com/urfave/cli"
 )
 
-func proposeSecurityCouncilInvite(c *cli.Context) error {
+func proposeSecurityCouncilInvite(id string, addressFlag string, yes bool) error {
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
 	defer rp.Close()
 
 	// Get the ID
-	id := c.String("id")
 	if id == "" {
-		id = cliutils.Prompt("Please enter an ID for the member you'd like to invite: (no spaces)", "^\\S+$", "Invalid ID")
+		id = prompt.Prompt("Please enter an ID for the member you'd like to invite: (no spaces)", "^\\S+$", "Invalid ID")
 	}
 	id, err = cliutils.ValidateDAOMemberID("id", id)
 	if err != nil {
@@ -28,11 +27,10 @@ func proposeSecurityCouncilInvite(c *cli.Context) error {
 	}
 
 	// Get the address
-	addressString := c.String("address")
-	if addressString == "" {
-		addressString = cliutils.Prompt("Please enter the member's address:", "^0x[0-9a-fA-F]{40}$", "Invalid member address")
+	if addressFlag == "" {
+		addressFlag = prompt.Prompt("Please enter the member's address:", "^0x[0-9a-fA-F]{40}$", "Invalid member address")
 	}
-	address, err := cliutils.ValidateAddress("address", addressString)
+	address, err := cliutils.ValidateAddress("address", addressFlag)
 	if err != nil {
 		return err
 	}
@@ -54,13 +52,13 @@ func proposeSecurityCouncilInvite(c *cli.Context) error {
 	}
 
 	// Assign max fee
-	err = gas.AssignMaxFeeAndLimit(canResponse.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canResponse.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm(fmt.Sprintf("Are you sure you want to propose inviting %s (%s) to the security council?", id, address.Hex()))) {
+	if prompt.Declined(yes, "Are you sure you want to propose inviting %s (%s) to the security council?", id, address.Hex()) {
 		fmt.Println("Cancelled.")
 		return nil
 	}

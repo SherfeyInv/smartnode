@@ -3,35 +3,36 @@ package node
 import (
 	"fmt"
 	"math/big"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
-	"github.com/urfave/cli"
 
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/color"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	rprewards "github.com/rocket-pool/smartnode/shared/services/rewards"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
 )
 
-const (
-	colorBlue string = "\033[36m"
-)
-
-func nodeClaimRewards(c *cli.Context) error {
+func nodeClaimRewards(restakeAmountFlag string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
 	defer rp.Close()
 
 	// Provide a notice
-	fmt.Printf("%sWelcome to the new rewards system!\nYou no longer need to claim rewards at each interval - you can simply let them accumulate and claim them whenever you want.\nHere you can see which intervals you haven't claimed yet, and how many rewards you earned during each one.%s\n\n", colorBlue, colorReset)
+	color.LightBluePrintln("Welcome to the new rewards system!")
+	color.LightBluePrintln("You no longer need to claim rewards at each interval - you can simply let them accumulate and claim them whenever you want.")
+	color.LightBluePrintln("Here you can see which intervals you haven't claimed yet, and how many rewards you earned during each one.")
+	fmt.Println()
 
 	// Get eligible intervals
 	rewardsInfoResponse, err := rp.GetRewardsInfo()
@@ -40,7 +41,7 @@ func nodeClaimRewards(c *cli.Context) error {
 	}
 
 	if !rewardsInfoResponse.Registered {
-		fmt.Printf("This node is not currently registered.\n")
+		fmt.Println("This node is not currently registered.")
 		return nil
 	}
 
@@ -60,8 +61,8 @@ func nodeClaimRewards(c *cli.Context) error {
 	// Download the Merkle trees for all unclaimed intervals that don't exist
 	if len(missingIntervals) > 0 || len(invalidIntervals) > 0 {
 		fmt.Println()
-		fmt.Printf("%sNOTE: If you would like to regenerate these tree files manually, please answer `n` to the prompt below and run `rocketpool network generate-rewards-tree` before claiming your rewards.%s\n", colorBlue, colorReset)
-		if !cliutils.Confirm("Would you like to download all missing rewards tree files now?") {
+		color.LightBluePrintln("NOTE: If you would like to regenerate these tree files manually, please answer `n` to the prompt below and run `rocketpool network generate-rewards-tree` before claiming your rewards.")
+		if !prompt.Confirm("Would you like to download all missing rewards tree files now?") {
 			fmt.Println("Cancelled.")
 			return nil
 		}
@@ -107,23 +108,28 @@ func nodeClaimRewards(c *cli.Context) error {
 
 	// Print the info for all available periods
 	totalRpl := big.NewInt(0)
-	totalEth := big.NewInt(0)
+	totalSmoothingEth := big.NewInt(0)
+	totalVoterShareEth := big.NewInt(0)
 	for _, intervalInfo := range rewardsInfoResponse.UnclaimedIntervals {
 		fmt.Printf("Rewards for Interval %d (%s to %s):\n", intervalInfo.Index, intervalInfo.StartTime.Local(), intervalInfo.EndTime.Local())
-		fmt.Printf("\tStaking:        %.6f RPL\n", eth.WeiToEth(&intervalInfo.CollateralRplAmount.Int))
+		fmt.Printf("\tStaking:        %.6f RPL\n", math.WeiToEth(&intervalInfo.CollateralRplAmount.Int))
 		if intervalInfo.ODaoRplAmount.Cmp(big.NewInt(0)) == 1 {
-			fmt.Printf("\tOracle DAO:     %.6f RPL\n", eth.WeiToEth(&intervalInfo.ODaoRplAmount.Int))
+			fmt.Printf("\tOracle DAO:     %.6f RPL\n", math.WeiToEth(&intervalInfo.ODaoRplAmount.Int))
 		}
-		fmt.Printf("\tSmoothing Pool: %.6f ETH\n\n", eth.WeiToEth(&intervalInfo.SmoothingPoolEthAmount.Int))
+		fmt.Printf("\tSmoothing Pool: %.6f ETH\n\n", math.WeiToEth(&intervalInfo.SmoothingPoolEthAmount.Int))
+		fmt.Printf("\tVoter Share:    %.6f ETH\n", math.WeiToEth(&intervalInfo.VoterShareEth.Int))
+		fmt.Printf("\tTotal:          %.6f ETH\n\n", math.WeiToEth(&intervalInfo.TotalEthAmount.Int))
 
 		totalRpl.Add(totalRpl, &intervalInfo.CollateralRplAmount.Int)
 		totalRpl.Add(totalRpl, &intervalInfo.ODaoRplAmount.Int)
-		totalEth.Add(totalEth, &intervalInfo.SmoothingPoolEthAmount.Int)
+		totalSmoothingEth.Add(totalSmoothingEth, &intervalInfo.SmoothingPoolEthAmount.Int)
+		totalVoterShareEth.Add(totalVoterShareEth, &intervalInfo.VoterShareEth.Int)
 	}
 
 	fmt.Println("Total Pending Rewards:")
-	fmt.Printf("\t%.6f RPL\n", eth.WeiToEth(totalRpl))
-	fmt.Printf("\t%.6f ETH\n\n", eth.WeiToEth(totalEth))
+	fmt.Printf("\t%.6f RPL\n", math.WeiToEth(totalRpl))
+	fmt.Printf("\t%.6f Smoothing Pool ETH\n", math.WeiToEth(totalSmoothingEth))
+	fmt.Printf("\t%.6f Voter Share ETH\n\n", math.WeiToEth(totalVoterShareEth))
 
 	// Get the list of intervals to claim
 	var indices []uint64
@@ -133,8 +139,8 @@ func nodeClaimRewards(c *cli.Context) error {
 	}
 	for {
 		indexSelection := ""
-		if !c.Bool("yes") {
-			indexSelection = cliutils.Prompt("Which intervals would you like to claim? Use a comma separated list (such as '1,2,3') or leave it blank to claim all intervals at once.", "^$|^\\d+(,\\d+)*$", "Invalid index selection")
+		if !yes {
+			indexSelection = prompt.Prompt("Which intervals would you like to claim? Use a comma separated list (such as '1,2,3') or leave it blank to claim all intervals at once.", "^$|^\\d+(,\\d+)*$", "Invalid index selection")
 		}
 
 		indices = []uint64{}
@@ -143,41 +149,34 @@ func nodeClaimRewards(c *cli.Context) error {
 				indices = append(indices, intervalInfo.Index)
 			}
 			break
-		} else {
-			elements := strings.Split(indexSelection, ",")
-			allValid := true
-			seenIndices := map[uint64]bool{}
+		}
+		elements := strings.Split(indexSelection, ",")
+		allValid := true
+		seenIndices := map[uint64]bool{}
 
-			for _, element := range elements {
-				found := false
-				for _, validIndex := range validIndices {
-					if validIndex == element {
-						found = true
-						break
-					}
-				}
-				if !found {
-					fmt.Printf("'%s' is an invalid index.\nValid indices are: %s\n", element, strings.Join(validIndices, ","))
-					allValid = false
-					break
-				}
-				index, err := strconv.ParseUint(element, 0, 64)
-				if err != nil {
-					fmt.Printf("'%s' is an invalid index.\nValid indices are: %s\n", element, strings.Join(validIndices, ","))
-					allValid = false
-					break
-				}
-
-				// Ignore duplicates
-				_, exists := seenIndices[index]
-				if !exists {
-					indices = append(indices, index)
-					seenIndices[index] = true
-				}
-			}
-			if allValid {
+		for _, element := range elements {
+			found := slices.Contains(validIndices, element)
+			if !found {
+				fmt.Printf("'%s' is an invalid index.\nValid indices are: %s\n", element, strings.Join(validIndices, ","))
+				allValid = false
 				break
 			}
+			index, err := strconv.ParseUint(element, 0, 64)
+			if err != nil {
+				fmt.Printf("'%s' is an invalid index.\nValid indices are: %s\n", element, strings.Join(validIndices, ","))
+				allValid = false
+				break
+			}
+
+			// Ignore duplicates
+			_, exists := seenIndices[index]
+			if !exists {
+				indices = append(indices, index)
+				seenIndices[index] = true
+			}
+		}
+		if allValid {
+			break
 		}
 	}
 
@@ -190,13 +189,14 @@ func nodeClaimRewards(c *cli.Context) error {
 				claimRpl.Add(claimRpl, &intervalInfo.CollateralRplAmount.Int)
 				claimRpl.Add(claimRpl, &intervalInfo.ODaoRplAmount.Int)
 				claimEth.Add(claimEth, &intervalInfo.SmoothingPoolEthAmount.Int)
+				claimEth.Add(claimEth, &intervalInfo.VoterShareEth.Int)
 			}
 		}
 	}
-	fmt.Printf("With this selection, you will claim %.6f RPL and %.6f ETH.\n\n", eth.WeiToEth(claimRpl), eth.WeiToEth(claimEth))
+	fmt.Printf("With this selection, you will claim %.6f RPL and %.6f ETH.\n\n", math.WeiToEth(claimRpl), math.WeiToEth(claimEth))
 
 	// Get restake amount
-	restakeAmountWei, err := getRestakeAmount(c, rewardsInfoResponse, claimRpl)
+	restakeAmountWei, err := getRestakeAmount(restakeAmountFlag, yes, rewardsInfoResponse, claimRpl)
 	if err != nil {
 		return err
 	}
@@ -209,7 +209,7 @@ func nodeClaimRewards(c *cli.Context) error {
 		}
 
 		// Assign max fees
-		err = gas.AssignMaxFeeAndLimit(canClaim.GasInfo, rp, c.Bool("yes"))
+		err = gas.AssignMaxFeeAndLimit(canClaim.GasLimits, rp, yes)
 		if err != nil {
 			return err
 		}
@@ -220,14 +220,14 @@ func nodeClaimRewards(c *cli.Context) error {
 		}
 
 		// Assign max fees
-		err = gas.AssignMaxFeeAndLimit(canClaim.GasInfo, rp, c.Bool("yes"))
+		err = gas.AssignMaxFeeAndLimit(canClaim.GasLimits, rp, yes)
 		if err != nil {
 			return err
 		}
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to claim your rewards?")) {
+	if prompt.Declined(yes, "Are you sure you want to claim your rewards?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -260,24 +260,30 @@ func nodeClaimRewards(c *cli.Context) error {
 }
 
 // Determine how much RPL to restake
-func getRestakeAmount(c *cli.Context, rewardsInfoResponse api.NodeGetRewardsInfoResponse, claimRpl *big.Int) (*big.Int, error) {
+func getRestakeAmount(restakeAmountFlag string, yes bool, rewardsInfoResponse api.NodeGetRewardsInfoResponse, claimRpl *big.Int) (*big.Int, error) {
 
 	// Get the current collateral
 	currentBondedCollateral := float64(0)
 	currentBorrowedCollateral := float64(0)
 	totalBondedCollateral := float64(0)
 	totalBorrowedCollateral := float64(0)
-	rplPrice := eth.WeiToEth(rewardsInfoResponse.RplPrice)
-	currentRplStake := eth.WeiToEth(rewardsInfoResponse.RplStake)
-	availableRpl := eth.WeiToEth(claimRpl)
+	currentRplStake := math.WeiToEth(rewardsInfoResponse.RplStake)
+	availableRpl := math.WeiToEth(claimRpl)
 
 	// Print info about autostaking RPL
 	total := currentRplStake + availableRpl
-	if rewardsInfoResponse.ActiveMinipools > 0 {
+	if rewardsInfoResponse.ActiveMinipools > 0 || rewardsInfoResponse.ActiveMegapoolValidators > 0 {
 		currentBondedCollateral = rewardsInfoResponse.BondedCollateralRatio
 		currentBorrowedCollateral = rewardsInfoResponse.BorrowedCollateralRatio
-		totalBondedCollateral = rplPrice * total / (float64(rewardsInfoResponse.ActiveMinipools)*32.0 - eth.WeiToEth(rewardsInfoResponse.EthMatched) - eth.WeiToEth(rewardsInfoResponse.PendingMatchAmount))
-		totalBorrowedCollateral = rplPrice * total / (eth.WeiToEth(rewardsInfoResponse.EthMatched) + eth.WeiToEth(rewardsInfoResponse.PendingMatchAmount))
+
+		if currentRplStake > 0 {
+			totalBondedCollateral = currentBondedCollateral * total / currentRplStake
+			totalBorrowedCollateral = currentBorrowedCollateral * total / currentRplStake
+		} else {
+			totalBondedCollateral = 0
+			totalBorrowedCollateral = 0
+		}
+
 		fmt.Printf("You currently have %.6f RPL staked (%.2f%% borrowed collateral, %.2f%% bonded collateral).\n", currentRplStake, currentBorrowedCollateral*100, currentBondedCollateral*100)
 	} else {
 		fmt.Println("You do not have any active minipools, so restaking RPL will not lead to any rewards.")
@@ -285,7 +291,6 @@ func getRestakeAmount(c *cli.Context, rewardsInfoResponse api.NodeGetRewardsInfo
 
 	// Handle restaking automation or prompts
 	var restakeAmountWei *big.Int
-	restakeAmountFlag := c.String("restake-amount")
 
 	if restakeAmountFlag == "all" {
 		// Restake everything with no regard for collateral level
@@ -303,9 +308,9 @@ func getRestakeAmount(c *cli.Context, rewardsInfoResponse api.NodeGetRewardsInfo
 			restakeAmountWei = claimRpl
 		} else {
 			fmt.Printf("Automatically restaking %.6f RPL, which will bring you to a total of %.6f RPL staked (%.2f%% borrowed collateral, %.2f%% bonded collateral).\n", stakeAmount, total, totalBorrowedCollateral*100, totalBondedCollateral*100)
-			restakeAmountWei = eth.EthToWei(stakeAmount)
+			restakeAmountWei = math.EthToWei(stakeAmount)
 		}
-	} else if c.Bool("yes") {
+	} else if yes {
 		// Ignore automatic restaking if `-y` is specified but `-a` isn't
 		fmt.Println("Automatic restaking is not requested.")
 		restakeAmountWei = nil
@@ -317,7 +322,7 @@ func getRestakeAmount(c *cli.Context, rewardsInfoResponse api.NodeGetRewardsInfo
 			collateralString,
 			"A custom amount",
 		}
-		selected, _ := cliutils.Select("Please choose an amount to restake here:", amountOptions)
+		selected, _ := prompt.Select("Please choose an amount to restake here:", amountOptions)
 		switch selected {
 		case 0:
 			restakeAmountWei = nil
@@ -325,7 +330,7 @@ func getRestakeAmount(c *cli.Context, rewardsInfoResponse api.NodeGetRewardsInfo
 			restakeAmountWei = claimRpl
 		case 2:
 			for {
-				inputAmount := cliutils.Prompt("Please enter an amount of RPL to stake:", "^\\d+(\\.\\d+)?$", "Invalid amount")
+				inputAmount := prompt.Prompt("Please enter an amount of RPL to stake:", "^\\d+(\\.\\d+)?$", "Invalid amount")
 				stakeAmount, err := strconv.ParseFloat(inputAmount, 64)
 				if err != nil {
 					fmt.Printf("Invalid stake amount '%s': %s\n", inputAmount, err.Error())
@@ -334,7 +339,7 @@ func getRestakeAmount(c *cli.Context, rewardsInfoResponse api.NodeGetRewardsInfo
 				} else if stakeAmount > availableRpl {
 					fmt.Println("Amount must be less than the RPL available to claim.")
 				} else {
-					restakeAmountWei = eth.EthToWei(stakeAmount)
+					restakeAmountWei = math.EthToWei(stakeAmount)
 					break
 				}
 			}

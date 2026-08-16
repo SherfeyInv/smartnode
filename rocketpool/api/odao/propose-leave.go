@@ -3,16 +3,18 @@ package odao
 import (
 	"fmt"
 
-	"github.com/rocket-pool/rocketpool-go/dao/trustednode"
-	"github.com/urfave/cli"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/trustednode"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canProposeLeave(c *cli.Context) (*api.CanProposeTNDAOLeaveResponse, error) {
+func canProposeLeave(c *cli.Command) (*api.CanProposeTNDAOLeaveResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -74,9 +76,9 @@ func canProposeLeave(c *cli.Context) (*api.CanProposeTNDAOLeaveResponse, error) 
 			return err
 		}
 		message := fmt.Sprintf("%s (%s) leaves", nodeMemberId, nodeMemberUrl)
-		gasInfo, err := trustednode.EstimateProposeMemberLeaveGas(rp, message, nodeAccount.Address, opts)
+		gasLimits, err := trustednode.EstimateProposeMemberLeaveGas(rp, message, nodeAccount.Address, opts)
 		if err == nil {
-			response.GasInfo = gasInfo
+			response.GasLimits = gasLimits
 		}
 		return err
 	})
@@ -87,12 +89,12 @@ func canProposeLeave(c *cli.Context) (*api.CanProposeTNDAOLeaveResponse, error) 
 	}
 
 	// Update & return response
-	response.CanPropose = !(response.ProposalCooldownActive || response.InsufficientMembers)
+	response.CanPropose = !response.ProposalCooldownActive && !response.InsufficientMembers
 	return &response, nil
 
 }
 
-func proposeLeave(c *cli.Context) (*api.ProposeTNDAOLeaveResponse, error) {
+func proposeLeave(c *cli.Command, opts *bind.TransactOpts) (*api.ProposeTNDAOLeaveResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -136,18 +138,6 @@ func proposeLeave(c *cli.Context) (*api.ProposeTNDAOLeaveResponse, error) {
 	// Wait for data
 	if err := wg.Wait(); err != nil {
 		return nil, err
-	}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
 	}
 
 	// Submit proposal

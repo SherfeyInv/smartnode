@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/dao/security"
-	"github.com/rocket-pool/rocketpool-go/dao/trustednode"
-	"github.com/rocket-pool/rocketpool-go/node"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/security"
+	"github.com/rocket-pool/smartnode/bindings/dao/trustednode"
+	"github.com/rocket-pool/smartnode/bindings/node"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
 	"github.com/rocket-pool/smartnode/shared/services/alerting"
 	"github.com/rocket-pool/smartnode/shared/services/config"
-	"github.com/urfave/cli"
 )
 
 // Settings
@@ -34,21 +35,7 @@ var ethClientStatusRefreshInterval, _ = time.ParseDuration("60s")
 // Service requirements
 //
 
-func RequireNodePassword(c *cli.Context) error {
-	nodePasswordSet, err := getNodePasswordSet(c)
-	if err != nil {
-		return err
-	}
-	if !nodePasswordSet {
-		return errors.New("The node password has not been set. Please run 'rocketpool wallet init' and try again.")
-	}
-	return nil
-}
-
-func RequireNodeWallet(c *cli.Context) error {
-	if err := RequireNodePassword(c); err != nil {
-		return err
-	}
+func RequireNodeWallet(c *cli.Command) error {
 	nodeWalletInitialized, err := getNodeWalletInitialized(c)
 	if err != nil {
 		return err
@@ -59,7 +46,12 @@ func RequireNodeWallet(c *cli.Context) error {
 	return nil
 }
 
-func RequireEthClientSynced(c *cli.Context) error {
+func RequireEthClientSynced(c *cli.Command) error {
+	// In static mode there is no live EC to poll; the snapshot is, by
+	// definition, a settled point in time.
+	if IsStaticStateMode(c) {
+		return nil
+	}
 	ethClientSynced, err := waitEthClientSynced(c, false, EthClientSyncTimeout)
 	if err != nil {
 		return err
@@ -70,7 +62,10 @@ func RequireEthClientSynced(c *cli.Context) error {
 	return nil
 }
 
-func RequireBeaconClientSynced(c *cli.Context) error {
+func RequireBeaconClientSynced(c *cli.Command) error {
+	if IsStaticStateMode(c) {
+		return nil
+	}
 	beaconClientSynced, err := waitBeaconClientSynced(c, false, BeaconClientSyncTimeout)
 	if err != nil {
 		return err
@@ -81,7 +76,12 @@ func RequireBeaconClientSynced(c *cli.Context) error {
 	return nil
 }
 
-func RequireRocketStorage(c *cli.Context) error {
+func RequireRocketStorage(c *cli.Command) error {
+	// In static mode the storage contract is implicitly present (the snapshot
+	// was produced against it); skip the live code-at probe.
+	if IsStaticStateMode(c) {
+		return nil
+	}
 	if err := RequireEthClientSynced(c); err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func RequireRocketStorage(c *cli.Context) error {
 	return nil
 }
 
-func RequireNodeRegistered(c *cli.Context) error {
+func RequireNodeRegistered(c *cli.Command) error {
 	if err := RequireNodeWallet(c); err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func RequireNodeRegistered(c *cli.Context) error {
 	return nil
 }
 
-func RequireNodeTrusted(c *cli.Context) error {
+func RequireNodeTrusted(c *cli.Command) error {
 	if err := RequireNodeWallet(c); err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ func RequireNodeTrusted(c *cli.Context) error {
 	return nil
 }
 
-func RequireNodeSecurityMember(c *cli.Context) error {
+func RequireNodeSecurityMember(c *cli.Command) error {
 	if err := RequireNodeWallet(c); err != nil {
 		return err
 	}
@@ -150,9 +150,9 @@ func RequireNodeSecurityMember(c *cli.Context) error {
 // Service synchronization
 //
 
-func WaitNodePassword(c *cli.Context, verbose bool) error {
+func WaitNodeHdPassword(ctx context.Context, c *cli.Command, verbose bool) error {
 	for {
-		nodePasswordSet, err := getNodePasswordSet(c)
+		nodePasswordSet, err := getNodeHdPasswordSet(c)
 		if err != nil {
 			return err
 		}
@@ -162,16 +162,18 @@ func WaitNodePassword(c *cli.Context, verbose bool) error {
 		if verbose {
 			log.Printf("The node password has not been set, retrying in %s...\n", checkNodePasswordInterval.String())
 		}
-		time.Sleep(checkNodePasswordInterval)
+		if err := sleepCtx(ctx, checkNodePasswordInterval); err != nil {
+			return err
+		}
 	}
 }
 
-func WaitNodeWallet(c *cli.Context, verbose bool) error {
-	if err := WaitNodePassword(c, verbose); err != nil {
+func WaitNodeHdWallet(ctx context.Context, c *cli.Command, verbose bool) error {
+	if err := WaitNodeHdPassword(ctx, c, verbose); err != nil {
 		return err
 	}
 	for {
-		nodeWalletInitialized, err := getNodeWalletInitialized(c)
+		nodeWalletInitialized, err := getHdWalletInitialized(c)
 		if err != nil {
 			return err
 		}
@@ -181,21 +183,32 @@ func WaitNodeWallet(c *cli.Context, verbose bool) error {
 		if verbose {
 			log.Printf("The node wallet has not been initialized, retrying in %s...\n", checkNodeWalletInterval.String())
 		}
-		time.Sleep(checkNodeWalletInterval)
+		if err := sleepCtx(ctx, checkNodeWalletInterval); err != nil {
+			return err
+		}
 	}
 }
 
-func WaitEthClientSynced(c *cli.Context, verbose bool) error {
+func WaitEthClientSynced(c *cli.Command, verbose bool) error {
+	if IsStaticStateMode(c) {
+		return nil
+	}
 	_, err := waitEthClientSynced(c, verbose, 0)
 	return err
 }
 
-func WaitBeaconClientSynced(c *cli.Context, verbose bool) error {
+func WaitBeaconClientSynced(c *cli.Command, verbose bool) error {
+	if IsStaticStateMode(c) {
+		return nil
+	}
 	_, err := waitBeaconClientSynced(c, verbose, 0)
 	return err
 }
 
-func WaitRocketStorage(c *cli.Context, verbose bool) error {
+func WaitRocketStorage(ctx context.Context, c *cli.Command, verbose bool) error {
+	if IsStaticStateMode(c) {
+		return nil
+	}
 	if err := WaitEthClientSynced(c, verbose); err != nil {
 		return err
 	}
@@ -210,19 +223,22 @@ func WaitRocketStorage(c *cli.Context, verbose bool) error {
 		if verbose {
 			log.Printf("The Rocket Pool storage contract was not found, retrying in %s...\n", checkRocketStorageInterval.String())
 		}
-		time.Sleep(checkRocketStorageInterval)
+		if err := sleepCtx(ctx, checkRocketStorageInterval); err != nil {
+			return err
+		}
 	}
 }
 
-func WaitNodeRegistered(c *cli.Context, verbose bool) error {
-	if err := WaitNodeWallet(c, verbose); err != nil {
+// This check makes calls to GetHdWallet instead of GetWallet as it's used in node and watchtower
+func WaitNodeRegistered(ctx context.Context, c *cli.Command, verbose bool) error {
+	if err := WaitNodeHdWallet(ctx, c, verbose); err != nil {
 		return err
 	}
-	if err := WaitRocketStorage(c, verbose); err != nil {
+	if err := WaitRocketStorage(ctx, c, verbose); err != nil {
 		return err
 	}
 	for {
-		nodeRegistered, err := getNodeRegistered(c)
+		nodeRegistered, err := getHdNodeRegistered(c)
 		if err != nil {
 			return err
 		}
@@ -232,7 +248,21 @@ func WaitNodeRegistered(c *cli.Context, verbose bool) error {
 		if verbose {
 			log.Printf("The node is not registered with Rocket Pool, retrying in %s...\n", checkNodeRegisteredInterval.String())
 		}
-		time.Sleep(checkNodeRegisteredInterval)
+		if err := sleepCtx(ctx, checkNodeRegisteredInterval); err != nil {
+			return err
+		}
+	}
+}
+
+// sleepCtx sleeps for d, returning ctx.Err() if the context is cancelled first.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 
@@ -240,8 +270,8 @@ func WaitNodeRegistered(c *cli.Context, verbose bool) error {
 // Helpers
 //
 
-// Check if the node password is set
-func getNodePasswordSet(c *cli.Context) (bool, error) {
+// Check if the node password stored on disk is set
+func getNodeHdPasswordSet(c *cli.Command) (bool, error) {
 	pm, err := GetPasswordManager(c)
 	if err != nil {
 		return false, err
@@ -250,7 +280,7 @@ func getNodePasswordSet(c *cli.Context) (bool, error) {
 }
 
 // Check if the node wallet is initialized
-func getNodeWalletInitialized(c *cli.Context) (bool, error) {
+func getNodeWalletInitialized(c *cli.Command) (bool, error) {
 	w, err := GetWallet(c)
 	if err != nil {
 		return false, err
@@ -258,8 +288,17 @@ func getNodeWalletInitialized(c *cli.Context) (bool, error) {
 	return w.GetInitialized()
 }
 
+// Check if the node wallet stored on disk is initialized
+func getHdWalletInitialized(c *cli.Command) (bool, error) {
+	w, err := GetHdWallet(c)
+	if err != nil {
+		return false, err
+	}
+	return w.GetInitialized()
+}
+
 // Check if the RocketStorage contract is loaded
-func getRocketStorageLoaded(c *cli.Context) (bool, error) {
+func getRocketStorageLoaded(c *cli.Command) (bool, error) {
 	cfg, err := GetConfig(c)
 	if err != nil {
 		return false, err
@@ -268,7 +307,9 @@ func getRocketStorageLoaded(c *cli.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	code, err := ec.CodeAt(context.Background(), common.HexToAddress(cfg.Smartnode.GetStorageAddress()), nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	code, err := ec.CodeAt(ctx, common.HexToAddress(cfg.Smartnode.GetStorageAddress()), nil)
 	if err != nil {
 		return false, err
 	}
@@ -276,16 +317,39 @@ func getRocketStorageLoaded(c *cli.Context) (bool, error) {
 }
 
 // Check if the node is registered
-func getNodeRegistered(c *cli.Context) (bool, error) {
+func getNodeRegistered(c *cli.Command) (bool, error) {
 	w, err := GetWallet(c)
 	if err != nil {
 		return false, err
+	}
+	nodeAccount, err := w.GetNodeAccount()
+	if err != nil {
+		return false, err
+	}
+	if IsStaticStateMode(c) {
+		return isNodeRegisteredInStaticState(c, nodeAccount.Address)
 	}
 	rp, err := GetRocketPool(c)
 	if err != nil {
 		return false, err
 	}
+	return node.GetNodeExists(rp, nodeAccount.Address, nil)
+}
+
+// Check if node wallet stored on disk is registered
+func getHdNodeRegistered(c *cli.Command) (bool, error) {
+	w, err := GetHdWallet(c)
+	if err != nil {
+		return false, err
+	}
 	nodeAccount, err := w.GetNodeAccount()
+	if err != nil {
+		return false, err
+	}
+	if IsStaticStateMode(c) {
+		return isNodeRegisteredInStaticState(c, nodeAccount.Address)
+	}
+	rp, err := GetRocketPool(c)
 	if err != nil {
 		return false, err
 	}
@@ -293,16 +357,28 @@ func getNodeRegistered(c *cli.Context) (bool, error) {
 }
 
 // Check if the node is a member of the oracle DAO
-func getNodeTrusted(c *cli.Context) (bool, error) {
+func getNodeTrusted(c *cli.Command) (bool, error) {
 	w, err := GetWallet(c)
 	if err != nil {
 		return false, err
 	}
-	rp, err := GetRocketPool(c)
+	nodeAccount, err := w.GetNodeAccount()
 	if err != nil {
 		return false, err
 	}
-	nodeAccount, err := w.GetNodeAccount()
+	if IsStaticStateMode(c) {
+		ns, err := getStaticState(c)
+		if err != nil {
+			return false, err
+		}
+		for _, m := range ns.OracleDaoMemberDetails {
+			if m.Address == nodeAccount.Address {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	rp, err := GetRocketPool(c)
 	if err != nil {
 		return false, err
 	}
@@ -310,12 +386,8 @@ func getNodeTrusted(c *cli.Context) (bool, error) {
 }
 
 // Check if the node is a member of the security council
-func getNodeSecurityMember(c *cli.Context) (bool, error) {
+func getNodeSecurityMember(c *cli.Command) (bool, error) {
 	w, err := GetWallet(c)
-	if err != nil {
-		return false, err
-	}
-	rp, err := GetRocketPool(c)
 	if err != nil {
 		return false, err
 	}
@@ -323,7 +395,27 @@ func getNodeSecurityMember(c *cli.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if IsStaticStateMode(c) {
+		// Security council membership is not captured in the NetworkState
+		// snapshot, so we cannot answer this from the static data.
+		return false, fmt.Errorf("security council membership cannot be verified in static state mode")
+	}
+	rp, err := GetRocketPool(c)
+	if err != nil {
+		return false, err
+	}
 	return security.GetMemberExists(rp, nodeAccount.Address, nil)
+}
+
+// isNodeRegisteredInStaticState reports whether the given address appears in
+// the snapshot's NodeDetailsByAddress index.
+func isNodeRegisteredInStaticState(c *cli.Command, address common.Address) (bool, error) {
+	ns, err := getStaticState(c)
+	if err != nil {
+		return false, err
+	}
+	_, ok := ns.NodeDetailsByAddress[address]
+	return ok, nil
 }
 
 // Wait for the eth client to sync
@@ -410,7 +502,7 @@ func checkBeaconClientStatus(bcMgr *BeaconClientManager) (bool, error) {
 	return false, fmt.Errorf("Primary consensus client is unavailable (%s) and no fallback consensus client is configured.", mgrStatus.PrimaryClientStatus.Error)
 }
 
-func waitEthClientSynced(c *cli.Context, verbose bool, timeout int64) (bool, error) {
+func waitEthClientSynced(c *cli.Command, verbose bool, timeout int64) (bool, error) {
 
 	// Prevent multiple waiting goroutines from requesting sync progress
 	ethClientSyncLock.Lock()
@@ -458,13 +550,18 @@ func waitEthClientSynced(c *cli.Context, verbose bool, timeout int64) (bool, err
 				return false, err
 			}
 			if synced {
-				alerting.AlertExecutionClientSyncComplete(cfg)
+				err = alerting.AlertExecutionClientSyncComplete(cfg)
+				if err != nil {
+					log.Printf("error alerting execution client sync complete: %v\n", err)
+				}
 				return true, nil
 			}
 		}
 
 		// Get sync progress
-		progress, err := clientToCheck.SyncProgress(context.Background())
+		pollCtx, pollCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		progress, err := clientToCheck.SyncProgress(pollCtx)
+		pollCancel()
 		if err != nil {
 			return false, err
 		}
@@ -488,7 +585,10 @@ func waitEthClientSynced(c *cli.Context, verbose bool, timeout int64) (bool, err
 			}
 			// Only return true if the last reportedly known block is within our defined threshold
 			if isUpToDate {
-				alerting.AlertExecutionClientSyncComplete(cfg)
+				err = alerting.AlertExecutionClientSyncComplete(cfg)
+				if err != nil {
+					log.Printf("error alerting execution client sync complete: %v\n", err)
+				}
 				return true, nil
 			}
 		}
@@ -504,7 +604,7 @@ func waitEthClientSynced(c *cli.Context, verbose bool, timeout int64) (bool, err
 // timeout of 0 indicates no timeout
 var beaconClientSyncLock sync.Mutex
 
-func waitBeaconClientSynced(c *cli.Context, verbose bool, timeout int64) (bool, error) {
+func waitBeaconClientSynced(c *cli.Command, verbose bool, timeout int64) (bool, error) {
 
 	// Prevent multiple waiting goroutines from requesting sync progress
 	beaconClientSyncLock.Lock()
@@ -552,7 +652,10 @@ func waitBeaconClientSynced(c *cli.Context, verbose bool, timeout int64) (bool, 
 				return false, err
 			}
 			if synced {
-				alerting.AlertBeaconClientSyncComplete(cfg)
+				err = alerting.AlertBeaconClientSyncComplete(cfg)
+				if err != nil {
+					log.Printf("error alerting beacon client sync complete: %v\n", err)
+				}
 				return true, nil
 			}
 		}
@@ -569,7 +672,10 @@ func waitBeaconClientSynced(c *cli.Context, verbose bool, timeout int64) (bool, 
 				log.Printf("Eth 2.0 node syncing: %.2f%%\n", syncStatus.Progress*100)
 			}
 		} else {
-			alerting.AlertBeaconClientSyncComplete(cfg)
+			err = alerting.AlertBeaconClientSyncComplete(cfg)
+			if err != nil {
+				log.Printf("error alerting beacon client sync complete: %v\n", err)
+			}
 			return true, nil
 		}
 
@@ -582,16 +688,17 @@ func waitBeaconClientSynced(c *cli.Context, verbose bool, timeout int64) (bool, 
 
 // Confirm the EC's latest block is within the threshold of the current system clock
 func IsSyncWithinThreshold(ec rocketpool.ExecutionClient) (bool, time.Time, error) {
-	timestamp, err := GetEthClientLatestBlockTimestamp(ec)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	t, err := ec.LatestBlockTime(ctx)
 	if err != nil {
 		return false, time.Time{}, err
 	}
 
 	// Return true if the latest block is under the threshold
-	blockTime := time.Unix(int64(timestamp), 0)
-	if time.Since(blockTime) < ethClientRecentBlockThreshold {
-		return true, blockTime, nil
+	if time.Since(t) < ethClientRecentBlockThreshold {
+		return true, t, nil
 	}
 
-	return false, blockTime, nil
+	return false, t, nil
 }

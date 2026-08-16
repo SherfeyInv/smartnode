@@ -1,25 +1,31 @@
 package watchtower
 
 import (
+	"context"
 	"fmt"
 	"math/big"
 	"math/rand"
 	"net/http"
-	"sync"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/fatih/color"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
-	"github.com/rocket-pool/rocketpool-go/dao/trustednode"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/dao/trustednode"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/utils"
 	"github.com/rocket-pool/smartnode/rocketpool/watchtower/collectors"
+	log "github.com/rocket-pool/smartnode/shared/logger"
 	"github.com/rocket-pool/smartnode/shared/services"
+	"github.com/rocket-pool/smartnode/shared/services/alerting"
 	"github.com/rocket-pool/smartnode/shared/services/beacon"
 	"github.com/rocket-pool/smartnode/shared/services/state"
-	"github.com/rocket-pool/smartnode/shared/utils/log"
+	"github.com/rocket-pool/smartnode/shared/services/wallet"
 )
 
 // Config
@@ -30,43 +36,81 @@ var taskCooldown, _ = time.ParseDuration("5s")
 const (
 	MaxConcurrentEth1Requests = 200
 
-	RespondChallengesColor         = color.FgWhite
-	ClaimRplRewardsColor           = color.FgGreen
-	SubmitRplPriceColor            = color.FgYellow
-	SubmitNetworkBalancesColor     = color.FgYellow
-	DissolveTimedOutMinipoolsColor = color.FgMagenta
-	SubmitScrubMinipoolsColor      = color.FgHiGreen
-	ErrorColor                     = color.FgRed
-	MetricsColor                   = color.FgHiYellow
-	SubmitRewardsTreeColor         = color.FgHiCyan
-	WarningColor                   = color.FgYellow
-	ProcessPenaltiesColor          = color.FgHiMagenta
-	CancelBondsColor               = color.FgGreen
-	CheckSoloMigrationsColor       = color.FgCyan
-	FinalizeProposalsColor         = color.FgMagenta
-	UpdateColor                    = color.FgHiWhite
+	RespondChallengesColor          = color.FgWhite
+	ClaimRplRewardsColor            = color.FgGreen
+	SubmitRplPriceColor             = color.FgYellow
+	SubmitNetworkBalancesColor      = color.FgYellow
+	DissolveTimedOutMinipoolsColor  = color.FgMagenta
+	DissolveTimedOutMegapoolsColor  = color.FgCyan
+	DissolveInvalidCredentialsColor = color.FgHiRed
+	ChallengeValidatorsExitingColor = color.FgHiBlue
+	SubmitScrubMinipoolsColor       = color.FgHiGreen
+	ErrorColor                      = color.FgRed
+	MetricsColor                    = color.FgHiYellow
+	SubmitRewardsTreeColor          = color.FgHiCyan
+	WarningColor                    = color.FgYellow
+	ObserveWarningColor             = color.FgHiRed
+	ProcessPenaltiesColor           = color.FgHiMagenta
+	CancelBondsColor                = color.FgGreen
+	CheckSoloMigrationsColor        = color.FgCyan
+	FinalizeProposalsColor          = color.FgMagenta
+	UpdateColor                     = color.FgHiWhite
 )
 
 // Register watchtower command
-func RegisterCommands(app *cli.App, name string, aliases []string) {
-	app.Commands = append(app.Commands, cli.Command{
+func RegisterCommands(app *cli.Command, name string, aliases []string) {
+	app.Commands = append(app.Commands, &cli.Command{
 		Name:    name,
 		Aliases: aliases,
 		Usage:   "Run Rocket Pool watchtower activity daemon",
-		Action: func(c *cli.Context) error {
+		Action: func(ctx context.Context, c *cli.Command) error {
 			return run(c)
 		},
 	})
 }
 
 // Run daemon
-func run(c *cli.Context) error {
+func run(c *cli.Command) error {
 
 	// Configure
 	configureHTTP()
 
-	// Wait until node is registered
-	if err := services.WaitNodeRegistered(c, true); err != nil {
+	// Create a context that is cancelled on SIGINT/SIGTERM so the HTTP server
+	// and other background goroutines can shut down gracefully.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	for {
+		// Exit if the process received SIGINT/SIGTERM
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Check the EC status
+		err := services.WaitEthClientSynced(c, false) // Force refresh the primary / fallback EC status
+		if err != nil {
+			if !sleepWithContext(ctx, taskCooldown) {
+				return err
+			}
+			continue
+		}
+
+		// Check the BC status
+		err = services.WaitBeaconClientSynced(c, false) // Force refresh the primary / fallback BC status
+		if err != nil {
+			if !sleepWithContext(ctx, taskCooldown) {
+				return err
+			}
+			continue
+		}
+
+		break
+	}
+
+	// Wait until the node wallet stored on disk is registered
+	if err := services.WaitNodeRegistered(ctx, c, true); err != nil {
 		return err
 	}
 
@@ -79,7 +123,13 @@ func run(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	w, err := services.GetWallet(c)
+	isObserveMode := wallet.CheckObserveMode(cfg.Smartnode.GetNodeAddressPath())
+	var w wallet.Wallet
+	if isObserveMode {
+		w, err = services.GetWallet(c)
+	} else {
+		w, err = services.GetHdWallet(c)
+	}
 	if err != nil {
 		return err
 	}
@@ -88,17 +138,18 @@ func run(c *cli.Context) error {
 		return err
 	}
 
+	protocolVersion, err := utils.GetCurrentVersion(rp, nil)
+	if err != nil {
+		return fmt.Errorf("error getting protocol version: %w", err)
+	}
+
+	fmt.Printf("Protocol version: %s\n", protocolVersion)
+
 	// Print the current mode
 	if cfg.IsNativeMode {
 		fmt.Println("Starting watchtower daemon in Native Mode.")
 	} else {
 		fmt.Println("Starting watchtower daemon in Docker Mode.")
-	}
-
-	// Check if rolling records are enabled
-	useRollingRecords := cfg.Smartnode.UseRollingRecords.Value.(bool)
-	if useRollingRecords {
-		fmt.Println("***NOTE: EXPERIMENTAL ROLLING RECORDS ARE ENABLED, BE ADVISED!***")
 	}
 
 	// Initialize the metrics reporters
@@ -109,12 +160,10 @@ func run(c *cli.Context) error {
 	// Initialize error logger
 	errorLog := log.NewColorLogger(ErrorColor)
 	updateLog := log.NewColorLogger(UpdateColor)
+	observeLog := log.NewColorLogger(ObserveWarningColor)
 
 	// Create the state manager
-	m, err := state.NewNetworkStateManager(rp, cfg, rp.Client, bc, &updateLog)
-	if err != nil {
-		return err
-	}
+	m := state.NewNetworkStateManager(rp, cfg.Smartnode.GetStateManagerContracts(), bc, &updateLog)
 
 	// Get the node address
 	nodeAccount, err := w.GetNodeAccount()
@@ -139,22 +188,26 @@ func run(c *cli.Context) error {
 	if err != nil {
 		return fmt.Errorf("error during timed-out minipools check: %w", err)
 	}
+	dissolveTimedOutMegapoolValidators, err := newDissolveTimedOutMegapoolValidators(c, log.NewColorLogger(DissolveTimedOutMinipoolsColor))
+	if err != nil {
+		return fmt.Errorf("error during timed-out minipools check: %w", err)
+	}
+	challengeValidatorsExiting, err := newChallengeValidatorsExiting(c, log.NewColorLogger(ChallengeValidatorsExitingColor))
+	if err != nil {
+		return fmt.Errorf("error during flag validators exiting: %w", err)
+	}
+	dissolveInvalidCredentials, err := newDissolveInvalidCredentials(c, log.NewColorLogger(DissolveInvalidCredentialsColor))
+	if err != nil {
+		return fmt.Errorf("error during invalid credentials check: %w", err)
+	}
 	submitScrubMinipools, err := newSubmitScrubMinipools(c, log.NewColorLogger(SubmitScrubMinipoolsColor), errorLog, scrubCollector)
 	if err != nil {
 		return fmt.Errorf("error during scrub check: %w", err)
 	}
 	var submitRewardsTree_Stateless *submitRewardsTree_Stateless
-	var submitRewardsTree_Rolling *submitRewardsTree_Rolling
-	if !useRollingRecords {
-		submitRewardsTree_Stateless, err = newSubmitRewardsTree_Stateless(c, log.NewColorLogger(SubmitRewardsTreeColor), errorLog, m)
-		if err != nil {
-			return fmt.Errorf("error during stateless rewards tree check: %w", err)
-		}
-	} else {
-		submitRewardsTree_Rolling, err = newSubmitRewardsTree_Rolling(c, log.NewColorLogger(SubmitRewardsTreeColor), errorLog, m)
-		if err != nil {
-			return fmt.Errorf("error during rolling rewards tree check: %w", err)
-		}
+	submitRewardsTree_Stateless, err = newSubmitRewardsTree_Stateless(c, log.NewColorLogger(SubmitRewardsTreeColor), errorLog, m)
+	if err != nil {
+		return fmt.Errorf("error during stateless rewards tree check: %w", err)
 	}
 	/*processPenalties, err := newProcessPenalties(c, log.NewColorLogger(ProcessPenaltiesColor), errorLog)
 	if err != nil {
@@ -163,10 +216,6 @@ func run(c *cli.Context) error {
 	generateRewardsTree, err := newGenerateRewardsTree(c, log.NewColorLogger(SubmitRewardsTreeColor), errorLog)
 	if err != nil {
 		return fmt.Errorf("error during manual tree generation check: %w", err)
-	}
-	cancelBondReductions, err := newCancelBondReductions(c, log.NewColorLogger(CancelBondsColor), errorLog, bondReductionCollector)
-	if err != nil {
-		return fmt.Errorf("error during bond reduction cancel check: %w", err)
 	}
 	checkSoloMigrations, err := newCheckSoloMigrations(c, log.NewColorLogger(CheckSoloMigrationsColor), errorLog, soloMigrationCollector)
 	if err != nil {
@@ -180,11 +229,7 @@ func run(c *cli.Context) error {
 	intervalDelta := maxTasksInterval - minTasksInterval
 	secondsDelta := intervalDelta.Seconds()
 
-	// Wait group to handle the various threads
-	wg := new(sync.WaitGroup)
-	wg.Add(2)
-
-	// Run task loop
+	// Run task loop forever
 	go func() {
 		for {
 			// Randomize the next interval
@@ -207,6 +252,19 @@ func run(c *cli.Context) error {
 				continue
 			}
 
+			// Check if the protocol version has changed
+			newProtocolVersion, err := utils.GetCurrentVersion(rp, nil)
+			if err != nil {
+				errorLog.Println(err)
+				time.Sleep(taskCooldown)
+				continue
+			}
+			if newProtocolVersion.Compare(protocolVersion) != 0 {
+				updateLog.Printlnf("Protocol version changed to: %s\n", newProtocolVersion)
+				updateLog.Println("Exiting daemon to load the new contracts...")
+				os.Exit(0)
+			}
+
 			// Get the Beacon block
 			//latestBlock, err := m.GetLatestFinalizedBeaconBlock()
 			latestBlock, err := m.GetLatestBeaconBlock()
@@ -222,6 +280,16 @@ func run(c *cli.Context) error {
 				errorLog.Println(err)
 				time.Sleep(taskCooldown)
 				continue
+			}
+
+			// Keep the observe mode warning visible in the logs and the alert active for as long as observe mode is in effect
+			if isObserveMode {
+				observeLog.Println("Watchtower daemon is observing address " + nodeAccount.Address.Hex() + ".")
+				observeLog.Println("Transactions will not be submitted.")
+				observeLog.Println("Run `rocketpool wallet end-masquerade` and restart the node/watchtower daemons when you have finished observing.")
+				if err := alerting.AlertObserveModeActive(cfg, nodeAccount.Address); err != nil {
+					errorLog.Println(err)
+				}
 			}
 
 			// Run the manual rewards tree generation
@@ -245,25 +313,35 @@ func run(c *cli.Context) error {
 					continue
 				}
 
+				// Flag validators that are exiting and didn't notify the exit
+				if err := challengeValidatorsExiting.run(state); err != nil {
+					errorLog.Println(err)
+				}
+				time.Sleep(taskCooldown)
+
+				// Run the megapool validator dissolve check
+				if err := dissolveTimedOutMegapoolValidators.run(state); err != nil {
+					errorLog.Println(err)
+				}
+				time.Sleep(taskCooldown)
+
+				// Run the invalid credentials dissolve check
+				if err := dissolveInvalidCredentials.run(state); err != nil {
+					errorLog.Println(err)
+				}
+				time.Sleep(taskCooldown)
+
 				// Run the network balance submission check
 				if err := submitNetworkBalances.run(state); err != nil {
 					errorLog.Println(err)
 				}
 				time.Sleep(taskCooldown)
 
-				if !useRollingRecords {
-					// Run the rewards tree submission check
-					if err := submitRewardsTree_Stateless.Run(isOnOdao, state, latestBlock.Slot); err != nil {
-						errorLog.Println(err)
-					}
-					time.Sleep(taskCooldown)
-				} else {
-					// Run the network balance and rewards tree submission check
-					if err := submitRewardsTree_Rolling.run(state); err != nil {
-						errorLog.Println(err)
-					}
-					time.Sleep(taskCooldown)
+				// Run the rewards tree submission check
+				if err := submitRewardsTree_Stateless.Run(isOnOdao, state, latestBlock.Slot); err != nil {
+					errorLog.Println(err)
 				}
+				time.Sleep(taskCooldown)
 
 				// Run the price submission check
 				if err := submitRplPrice.run(state); err != nil {
@@ -289,12 +367,6 @@ func run(c *cli.Context) error {
 				}
 				time.Sleep(taskCooldown)
 
-				// Run the bond cancel check
-				if err := cancelBondReductions.run(state); err != nil {
-					errorLog.Println(err)
-				}
-				time.Sleep(taskCooldown)
-
 				// Run the solo migration check
 				if err := checkSoloMigrations.run(state); err != nil {
 					errorLog.Println(err)
@@ -307,24 +379,14 @@ func run(c *cli.Context) error {
 				}*/
 				// DISABLED until MEV-Boost can support it
 			} else {
-				/*
-				 */
-				if !useRollingRecords {
-					// Run the rewards tree submission check
-					if err := submitRewardsTree_Stateless.Run(isOnOdao, nil, latestBlock.Slot); err != nil {
-						errorLog.Println(err)
-					}
-				} else {
-					// Run the network balance and rewards tree submission check
-					if err := submitRewardsTree_Rolling.run(nil); err != nil {
-						errorLog.Println(err)
-					}
+				// Run the rewards tree submission check
+				if err := submitRewardsTree_Stateless.Run(isOnOdao, nil, latestBlock.Slot); err != nil {
+					errorLog.Println(err)
 				}
 			}
 
 			time.Sleep(interval)
 		}
-		wg.Done()
 	}()
 
 	// Run metrics loop
@@ -333,11 +395,10 @@ func run(c *cli.Context) error {
 		if err != nil {
 			errorLog.Println(err)
 		}
-		wg.Done()
 	}()
 
-	// Wait for both threads to stop
-	wg.Wait()
+	// Block until SIGINT/SIGTERM is received.
+	<-ctx.Done()
 	return nil
 }
 
@@ -375,25 +436,12 @@ func isOnOracleDAO(rp *rocketpool.RocketPool, nodeAddress common.Address, block 
 	return nodeTrusted, nil
 }
 
-// Check if Houston has been deployed yet
-func printHoustonMessage(log *log.ColorLogger) {
-	log.Println(`
-*       .
-*      / \
-*     |.'.|
-*     |'.'|
-*   ,'|   |'.
-*  |,-'-|-'-.|
-*   __|_| |         _        _      _____           _
-*  | ___ \|        | |      | |    | ___ \         | |
-*  | |_/ /|__   ___| | _____| |_   | |_/ /__   ___ | |
-*  |    // _ \ / __| |/ / _ \ __|  |  __/ _ \ / _ \| |
-*  | |\ \ (_) | (__|   <  __/ |_   | | | (_) | (_) | |
-*  \_| \_\___/ \___|_|\_\___|\__|  \_|  \___/ \___/|_|
-* +---------------------------------------------------+
-* |    DECENTRALISED STAKING PROTOCOL FOR ETHEREUM    |
-* +---------------------------------------------------+
-*
-* =============== Houston has launched! ===============
-`)
+// sleepWithContext sleeps for d or until ctx is cancelled, returning false if cancelled.
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(d):
+		return true
+	}
 }

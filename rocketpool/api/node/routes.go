@@ -1,0 +1,1002 @@
+package node
+
+import (
+	"encoding/hex"
+	"fmt"
+	"math/big"
+	"net/http"
+	"strconv"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/urfave/cli/v3"
+
+	rptypes "github.com/rocket-pool/smartnode/bindings/types"
+	"github.com/rocket-pool/smartnode/rocketpool/api/response"
+
+	"github.com/rocket-pool/smartnode/shared/services"
+)
+
+// RegisterRoutes registers the node module's HTTP routes onto mux.
+func RegisterRoutes(mux *http.ServeMux, c *cli.Command) {
+	mux.HandleFunc("/api/node/status", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := getStatus(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/alerts", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := getAlerts(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/sync", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := getSyncProgress(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/get-eth-balance", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := getNodeEthBalance(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/check-collateral", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := checkCollateral(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/rewards", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := getRewards(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/deposit-contract-info", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := getDepositContractInfo(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Register ---
+
+	mux.HandleFunc("/api/node/can-register", func(w http.ResponseWriter, r *http.Request) {
+		tz := r.URL.Query().Get("timezoneLocation")
+		resp, err := canRegisterNode(c, tz)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/register", func(w http.ResponseWriter, r *http.Request) {
+		tz := r.FormValue("timezoneLocation")
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := registerNode(c, tz, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Timezone ---
+
+	mux.HandleFunc("/api/node/can-set-timezone", func(w http.ResponseWriter, r *http.Request) {
+		tz := r.URL.Query().Get("timezoneLocation")
+		resp, err := canSetTimezoneLocation(c, tz)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/set-timezone", func(w http.ResponseWriter, r *http.Request) {
+		tz := r.FormValue("timezoneLocation")
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := setTimezoneLocation(c, tz, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Primary withdrawal address ---
+
+	mux.HandleFunc("/api/node/can-set-primary-withdrawal-address", func(w http.ResponseWriter, r *http.Request) {
+		addr := common.HexToAddress(r.URL.Query().Get("address"))
+		confirm := r.URL.Query().Get("confirm") == "true"
+		resp, err := canSetPrimaryWithdrawalAddress(c, addr, confirm)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/set-primary-withdrawal-address", func(w http.ResponseWriter, r *http.Request) {
+		addr := common.HexToAddress(r.FormValue("address"))
+		confirm := r.FormValue("confirm") == "true"
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := setPrimaryWithdrawalAddress(c, addr, confirm, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/can-confirm-primary-withdrawal-address", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := canConfirmPrimaryWithdrawalAddress(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/confirm-primary-withdrawal-address", func(w http.ResponseWriter, r *http.Request) {
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := confirmPrimaryWithdrawalAddress(c, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- RPL withdrawal address ---
+
+	mux.HandleFunc("/api/node/can-set-rpl-withdrawal-address", func(w http.ResponseWriter, r *http.Request) {
+		addr := common.HexToAddress(r.URL.Query().Get("address"))
+		confirm := r.URL.Query().Get("confirm") == "true"
+		resp, err := canSetRPLWithdrawalAddress(c, addr, confirm)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/set-rpl-withdrawal-address", func(w http.ResponseWriter, r *http.Request) {
+		addr := common.HexToAddress(r.FormValue("address"))
+		confirm := r.FormValue("confirm") == "true"
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := setRPLWithdrawalAddress(c, addr, confirm, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/can-confirm-rpl-withdrawal-address", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := canConfirmRPLWithdrawalAddress(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/confirm-rpl-withdrawal-address", func(w http.ResponseWriter, r *http.Request) {
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := confirmRPLWithdrawalAddress(c, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Swap RPL ---
+
+	mux.HandleFunc("/api/node/swap-rpl-allowance", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := allowanceFsRpl(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/can-swap-rpl", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := canNodeSwapRpl(c, amountWei)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/get-swap-rpl-approval-gas", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := getSwapApprovalGas(c, amountWei)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/swap-rpl-approve-rpl", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := approveFsRpl(c, amountWei, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/wait-and-swap-rpl", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		hash := common.HexToHash(r.FormValue("approvalTxHash"))
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := waitForApprovalAndSwapFsRpl(c, amountWei, hash, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/swap-rpl", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := swapRpl(c, amountWei, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Stake RPL ---
+
+	mux.HandleFunc("/api/node/stake-rpl-allowance", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := allowanceRpl(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/can-stake-rpl", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := canNodeStakeRpl(c, amountWei)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/get-stake-rpl-approval-gas", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := getStakeApprovalGas(c, amountWei)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/stake-rpl-approve-rpl", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := approveRpl(c, amountWei, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/wait-and-stake-rpl", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		hash := common.HexToHash(r.FormValue("approvalTxHash"))
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := waitForApprovalAndStakeRpl(c, amountWei, hash, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/stake-rpl", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := stakeRpl(c, amountWei, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- RPL locking ---
+
+	mux.HandleFunc("/api/node/can-set-rpl-locking-allowed", func(w http.ResponseWriter, r *http.Request) {
+		allowed := r.URL.Query().Get("allowed") == "true"
+		resp, err := canSetRplLockAllowed(c, allowed)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/set-rpl-locking-allowed", func(w http.ResponseWriter, r *http.Request) {
+		allowed := r.FormValue("allowed") == "true"
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := setRplLockAllowed(c, allowed, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Stake RPL for allowed ---
+
+	mux.HandleFunc("/api/node/can-set-stake-rpl-for-allowed", func(w http.ResponseWriter, r *http.Request) {
+		caller := common.HexToAddress(r.URL.Query().Get("caller"))
+		allowed := r.URL.Query().Get("allowed") == "true"
+		resp, err := canSetStakeRplForAllowed(c, caller, allowed)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/set-stake-rpl-for-allowed", func(w http.ResponseWriter, r *http.Request) {
+		caller := common.HexToAddress(r.FormValue("caller"))
+		allowed := r.FormValue("allowed") == "true"
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := setStakeRplForAllowed(c, caller, allowed, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Withdraw RPL ---
+
+	mux.HandleFunc("/api/node/can-withdraw-rpl", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := canNodeWithdrawRpl(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/withdraw-rpl", func(w http.ResponseWriter, r *http.Request) {
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := nodeWithdrawRpl(c, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/can-unstake-legacy-rpl", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := canNodeUnstakeLegacyRpl(c, amountWei)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/unstake-legacy-rpl", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := nodeUnstakeLegacyRpl(c, amountWei, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/can-withdraw-rpl-v131", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := canNodeWithdrawRplv1_3_1(c, amountWei)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/withdraw-rpl-v131", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := nodeWithdrawRplv1_3_1(c, amountWei, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/can-unstake-rpl", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := canNodeUnstakeRpl(c, amountWei)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/unstake-rpl", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := nodeUnstakeRpl(c, amountWei, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Withdraw ETH / credit ---
+
+	mux.HandleFunc("/api/node/can-withdraw-eth", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := canNodeWithdrawEth(c, amountWei)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/withdraw-eth", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := nodeWithdrawEth(c, amountWei, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/can-withdraw-credit", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := canNodeWithdrawCredit(c, amountWei)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/withdraw-credit", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := nodeWithdrawCredit(c, amountWei, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Deposit ---
+
+	mux.HandleFunc("/api/node/can-deposit", func(w http.ResponseWriter, r *http.Request) {
+		params, err := parseDepositParams(r, false)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := canNodeDeposits(c, params.count, params.amountWei, params.minFee, params.salt, params.expressTickets)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/deposit", func(w http.ResponseWriter, r *http.Request) {
+		params, err := parseDepositParams(r, true)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := nodeDeposits(c, params.count, params.amountWei, params.minFee, params.salt, params.useCreditBalance, params.expressTickets, params.submit, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Send / burn ---
+
+	mux.HandleFunc("/api/node/can-send", func(w http.ResponseWriter, r *http.Request) {
+		amountRaw, err := parseNodeFloat64(r, "amountRaw")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		token := r.URL.Query().Get("token")
+		to := common.HexToAddress(r.URL.Query().Get("to"))
+		resp, err := canNodeSend(c, amountRaw, token, to)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/send", func(w http.ResponseWriter, r *http.Request) {
+		amountRaw, err := parseNodeFloat64(r, "amountRaw")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		token := r.FormValue("token")
+		to := common.HexToAddress(r.FormValue("to"))
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := nodeSend(c, amountRaw, token, to, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/send-all", func(w http.ResponseWriter, r *http.Request) {
+		token := r.FormValue("token")
+		to := common.HexToAddress(r.FormValue("to"))
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := nodeSendAllTokens(c, token, to, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/can-burn", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		token := r.URL.Query().Get("token")
+		resp, err := canNodeBurn(c, amountWei, token)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/burn", func(w http.ResponseWriter, r *http.Request) {
+		amountWei, err := parseNodeBigInt(r, "amountWei")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		token := r.FormValue("token")
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := nodeBurn(c, amountWei, token, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- RPL claim ---
+
+	mux.HandleFunc("/api/node/can-claim-rpl-rewards", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := canNodeClaimRpl(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/claim-rpl-rewards", func(w http.ResponseWriter, r *http.Request) {
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := nodeClaimRpl(c, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Fee distributor ---
+
+	mux.HandleFunc("/api/node/is-fee-distributor-initialized", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := isFeeDistributorInitialized(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/get-initialize-fee-distributor-gas", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := getInitializeFeeDistributorGas(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/initialize-fee-distributor", func(w http.ResponseWriter, r *http.Request) {
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := initializeFeeDistributor(c, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/can-distribute", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := canDistribute(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/distribute", func(w http.ResponseWriter, r *http.Request) {
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := distribute(c, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Interval rewards ---
+
+	mux.HandleFunc("/api/node/get-rewards-info", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := getRewardsInfo(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/can-claim-rewards", func(w http.ResponseWriter, r *http.Request) {
+		indices := r.URL.Query().Get("indices")
+		resp, err := canClaimRewards(c, indices)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/claim-rewards", func(w http.ResponseWriter, r *http.Request) {
+		indices := r.FormValue("indices")
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := claimRewards(c, indices, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/can-claim-and-stake-rewards", func(w http.ResponseWriter, r *http.Request) {
+		indices := r.URL.Query().Get("indices")
+		stakeAmount, err := parseNodeBigInt(r, "stakeAmount")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := canClaimAndStakeRewards(c, indices, stakeAmount)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/claim-and-stake-rewards", func(w http.ResponseWriter, r *http.Request) {
+		indices := r.FormValue("indices")
+		stakeAmount, err := parseNodeBigInt(r, "stakeAmount")
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := claimAndStakeRewards(c, indices, stakeAmount, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Smoothing pool ---
+
+	mux.HandleFunc("/api/node/get-smoothing-pool-registration-status", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := getSmoothingPoolRegistrationStatus(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/can-set-smoothing-pool-status", func(w http.ResponseWriter, r *http.Request) {
+		if !r.URL.Query().Has("status") {
+			response.WriteErrorResponse(w, &response.BadRequestError{Err: fmt.Errorf("missing required parameter 'status'")})
+			return
+		}
+		status := r.URL.Query().Get("status") == "true"
+		resp, err := canSetSmoothingPoolStatus(c, status)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/set-smoothing-pool-status", func(w http.ResponseWriter, r *http.Request) {
+		status := r.FormValue("status") == "true"
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := setSmoothingPoolStatus(c, status, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- ENS ---
+
+	mux.HandleFunc("/api/node/resolve-ens-name", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		resp, err := resolveEnsName(c, name)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/reverse-resolve-ens-name", func(w http.ResponseWriter, r *http.Request) {
+		addr := common.HexToAddress(r.URL.Query().Get("address"))
+		resp, err := reverseResolveEnsName(c, addr)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Sign ---
+
+	mux.HandleFunc("/api/node/sign-message", func(w http.ResponseWriter, r *http.Request) {
+		message := r.FormValue("message")
+		resp, err := signMessage(c, message)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/sign", func(w http.ResponseWriter, r *http.Request) {
+		serializedTx := r.FormValue("serializedTx")
+		resp, err := sign(c, serializedTx)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Vacant minipool ---
+
+	mux.HandleFunc("/api/node/can-create-vacant-minipool", func(w http.ResponseWriter, r *http.Request) {
+		params, err := parseVacantMinipoolParams(r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := canCreateVacantMinipool(c, params.amountWei, params.minFee, params.salt, params.pubkey)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/create-vacant-minipool", func(w http.ResponseWriter, r *http.Request) {
+		params, err := parseVacantMinipoolParams(r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := createVacantMinipool(c, params.amountWei, params.minFee, params.salt, params.pubkey, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Send message ---
+
+	mux.HandleFunc("/api/node/can-send-message", func(w http.ResponseWriter, r *http.Request) {
+		addr := common.HexToAddress(r.URL.Query().Get("address"))
+		msgBytes, err := hex.DecodeString(r.URL.Query().Get("message"))
+		if err != nil {
+			response.WriteErrorResponse(w, fmt.Errorf("invalid message hex: %w", err))
+			return
+		}
+		resp, err := canSendMessage(c, addr, msgBytes)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/send-message", func(w http.ResponseWriter, r *http.Request) {
+		addr := common.HexToAddress(r.FormValue("address"))
+		msgBytes, err := hex.DecodeString(r.FormValue("message"))
+		if err != nil {
+			response.WriteErrorResponse(w, fmt.Errorf("invalid message hex: %w", err))
+			return
+		}
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := sendMessage(c, addr, msgBytes, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Express tickets ---
+
+	mux.HandleFunc("/api/node/get-express-ticket-count", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := getExpressTicketCount(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/get-express-tickets-provisioned", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := getExpressTicketsProvisioned(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/can-provision-express-tickets", func(w http.ResponseWriter, r *http.Request) {
+		resp, err := canProvisionExpressTickets(c)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/provision-express-tickets", func(w http.ResponseWriter, r *http.Request) {
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := provisionExpressTickets(c, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Unclaimed rewards ---
+
+	mux.HandleFunc("/api/node/can-claim-unclaimed-rewards", func(w http.ResponseWriter, r *http.Request) {
+		nodeAddr := common.HexToAddress(r.URL.Query().Get("nodeAddress"))
+		resp, err := canClaimUnclaimedRewards(c, nodeAddr)
+		response.WriteResponse(w, resp, err)
+	})
+
+	mux.HandleFunc("/api/node/claim-unclaimed-rewards", func(w http.ResponseWriter, r *http.Request) {
+		nodeAddr := common.HexToAddress(r.FormValue("nodeAddress"))
+		opts, err := services.GetNodeAccountTransactorFromRequest(c, r)
+		if err != nil {
+			response.WriteErrorResponse(w, err)
+			return
+		}
+		resp, err := claimUnclaimedRewards(c, nodeAddr, opts)
+		response.WriteResponse(w, resp, err)
+	})
+
+	// --- Bond requirement ---
+
+	mux.HandleFunc("/api/node/get-bond-requirement", func(w http.ResponseWriter, r *http.Request) {
+		numValidators, err := strconv.ParseUint(r.URL.Query().Get("numValidators"), 10, 64)
+		if err != nil {
+			response.WriteErrorResponse(w, fmt.Errorf("invalid numValidators: %w", err))
+			return
+		}
+		resp, err := getBondRequirement(c, numValidators)
+		response.WriteResponse(w, resp, err)
+	})
+}
+
+// --- Helper types and functions ---
+
+type depositParams struct {
+	count            uint64
+	amountWei        *big.Int
+	minFee           float64
+	salt             *big.Int
+	expressTickets   int64
+	useCreditBalance bool
+	submit           bool
+}
+
+func parseDepositParams(r *http.Request, includeExecuteParams bool) (depositParams, error) {
+	var p depositParams
+	var err error
+
+	p.amountWei, err = parseNodeBigInt(r, "amountWei")
+	if err != nil {
+		return p, fmt.Errorf("invalid amountWei: %w", err)
+	}
+
+	minFeeStr := r.URL.Query().Get("minFee")
+	if minFeeStr == "" {
+		minFeeStr = r.FormValue("minFee")
+	}
+	p.minFee, err = strconv.ParseFloat(minFeeStr, 64)
+	if err != nil {
+		return p, fmt.Errorf("invalid minFee: %w", err)
+	}
+
+	p.salt, err = parseNodeBigInt(r, "salt")
+	if err != nil {
+		return p, fmt.Errorf("invalid salt: %w", err)
+	}
+
+	expressStr := r.URL.Query().Get("expressTickets")
+	if expressStr == "" {
+		expressStr = r.FormValue("expressTickets")
+	}
+	p.expressTickets, err = strconv.ParseInt(expressStr, 10, 64)
+	if err != nil {
+		return p, fmt.Errorf("invalid expressTickets: %w", err)
+	}
+
+	countStr := r.URL.Query().Get("count")
+	if countStr == "" {
+		countStr = r.FormValue("count")
+	}
+	p.count, err = strconv.ParseUint(countStr, 10, 64)
+	if err != nil {
+		return p, fmt.Errorf("invalid count: %w", err)
+	}
+
+	if includeExecuteParams {
+		p.useCreditBalance = r.FormValue("useCreditBalance") == "true"
+		p.submit = r.FormValue("submit") == "true"
+	}
+
+	return p, nil
+}
+
+type vacantMinipoolParams struct {
+	amountWei *big.Int
+	minFee    float64
+	salt      *big.Int
+	pubkey    rptypes.ValidatorPubkey
+}
+
+func parseVacantMinipoolParams(r *http.Request) (vacantMinipoolParams, error) {
+	var p vacantMinipoolParams
+	var err error
+
+	raw := r.URL.Query().Get("amountWei")
+	if raw == "" {
+		raw = r.FormValue("amountWei")
+	}
+	p.amountWei, _ = new(big.Int).SetString(raw, 10)
+	if p.amountWei == nil {
+		return p, fmt.Errorf("invalid amountWei: %s", raw)
+	}
+
+	minFeeStr := r.URL.Query().Get("minFee")
+	if minFeeStr == "" {
+		minFeeStr = r.FormValue("minFee")
+	}
+	p.minFee, err = strconv.ParseFloat(minFeeStr, 64)
+	if err != nil {
+		return p, fmt.Errorf("invalid minFee: %w", err)
+	}
+
+	saltStr := r.URL.Query().Get("salt")
+	if saltStr == "" {
+		saltStr = r.FormValue("salt")
+	}
+	p.salt, _ = new(big.Int).SetString(saltStr, 10)
+	if p.salt == nil {
+		return p, fmt.Errorf("invalid salt: %s", saltStr)
+	}
+
+	pubkeyStr := r.URL.Query().Get("pubkey")
+	if pubkeyStr == "" {
+		pubkeyStr = r.FormValue("pubkey")
+	}
+	pubkeyBytes, err := hex.DecodeString(pubkeyStr)
+	if err != nil {
+		return p, fmt.Errorf("invalid pubkey hex: %w", err)
+	}
+	if len(pubkeyBytes) != len(p.pubkey) {
+		return p, fmt.Errorf("pubkey must be %d bytes, got %d", len(p.pubkey), len(pubkeyBytes))
+	}
+	copy(p.pubkey[:], pubkeyBytes)
+
+	return p, nil
+}
+
+func parseNodeBigInt(r *http.Request, name string) (*big.Int, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		raw = r.FormValue(name)
+	}
+	v, ok := new(big.Int).SetString(raw, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid %s: %s", name, raw)
+	}
+	return v, nil
+}
+
+func parseNodeFloat64(r *http.Request, name string) (float64, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		raw = r.FormValue(name)
+	}
+	return strconv.ParseFloat(raw, 64)
+}

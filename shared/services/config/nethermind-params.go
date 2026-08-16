@@ -4,13 +4,14 @@ import (
 	"runtime"
 
 	"github.com/pbnjay/memory"
+
 	"github.com/rocket-pool/smartnode/shared/types/config"
 )
 
 // Constants
 const (
-	nethermindTagProd          string = "nethermind/nethermind:1.28.0"
-	nethermindTagTest          string = "nethermind/nethermind:1.28.0"
+	nethermindTagProd          string = "nethermind/nethermind:1.39.3"
+	nethermindTagTest          string = "nethermind/nethermind:1.39.3"
 	nethermindEventLogInterval int    = 1000
 	nethermindStopSignal       string = "SIGTERM"
 )
@@ -101,22 +102,22 @@ func NewNethermindConfig(cfg *RocketPoolConfig) *NethermindConfig {
 		PruneMemSize: config.Parameter{
 			ID:                 "pruneMemSize",
 			Name:               "In-Memory Pruning Cache Size",
-			Description:        "The amount of RAM (in MB) you want to dedicate to Nethermind for its in-memory pruning system. Higher values mean less writes to your SSD and slower overall database growth.\n\nThe default value for this will be calculated dynamically based on your system's available RAM, but you can adjust it manually.",
-			Type:               config.ParameterType_Uint,
-			Default:            map[config.Network]interface{}{config.Network_All: calculateNethermindPruneMemSize()},
+			Description:        "The amount of RAM (in MB) you want to dedicate to Nethermind for its in-memory pruning system. Higher values mean less writes to your SSD and slower overall database growth.\n\n Leave it blank to use the client's default.",
+			Type:               config.ParameterType_String,
+			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
-			CanBeBlank:         false,
+			CanBeBlank:         true,
 			OverwriteOnUpgrade: false,
 		},
 
 		FullPruneMemoryBudget: config.Parameter{
 			ID:                 "fullPruneMemoryBudget",
 			Name:               "Full Prune Memory Budget Size",
-			Description:        "The amount of RAM (in MB) you want to dedicate to Nethermind for its full pruning system. Higher values mean less writes to your SSD and faster pruning times.\n\nThe default value for this will be calculated dynamically based on your system's available RAM, but you can adjust it manually.",
-			Type:               config.ParameterType_Uint,
-			Default:            map[config.Network]interface{}{config.Network_All: calculateNethermindFullPruneMemBudget()},
+			Description:        "The amount of RAM (in MB) you want to dedicate to Nethermind for its full pruning system. Higher values mean less writes to your SSD and faster pruning times.\n\n Leave blank to use the client's default.",
+			Type:               config.ParameterType_String,
+			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
-			CanBeBlank:         false,
+			CanBeBlank:         true,
 			OverwriteOnUpgrade: false,
 		},
 
@@ -125,7 +126,7 @@ func NewNethermindConfig(cfg *RocketPoolConfig) *NethermindConfig {
 			Name:               "Prune threshold (MB)",
 			Description:        "When the volume free space (in MB) hits this level, Nethermind will automatically start full pruning to reclaim disk space.",
 			Type:               config.ParameterType_Uint,
-			Default:            map[config.Network]interface{}{config.Network_Mainnet: uint64(375809), config.Network_Holesky: uint64(51200), config.Network_Devnet: uint64(51200)},
+			Default:            map[config.Network]interface{}{config.Network_Mainnet: uint64(375809), config.Network_Testnet: uint64(51200), config.Network_Devnet: uint64(51200)},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
@@ -172,7 +173,7 @@ func NewNethermindConfig(cfg *RocketPoolConfig) *NethermindConfig {
 			Default: map[config.Network]interface{}{
 				config.Network_Mainnet: nethermindTagProd,
 				config.Network_Devnet:  nethermindTagTest,
-				config.Network_Holesky: nethermindTagTest,
+				config.Network_Testnet: nethermindTagTest,
 			},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
 			CanBeBlank:         false,
@@ -182,7 +183,7 @@ func NewNethermindConfig(cfg *RocketPoolConfig) *NethermindConfig {
 		AdditionalFlags: config.Parameter{
 			ID:                 "additionalFlags",
 			Name:               "Additional Flags",
-			Description:        "Additional custom command line flags you want to pass to Nethermind, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass to Nethermind, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
@@ -198,59 +199,23 @@ func calculateNethermindCache() uint64 {
 
 	if totalMemoryGB == 0 {
 		return 0
-	} else if totalMemoryGB < 9 {
-		return 512
-	} else if totalMemoryGB < 13 {
-		return 512
-	} else if totalMemoryGB < 17 {
-		return 1024
-	} else if totalMemoryGB < 25 {
-		return 1024
-	} else if totalMemoryGB < 33 {
-		return 1024
-	} else {
-		return 2048
 	}
-}
-
-// Calculate the recommended size for Nethermind's in-memory pruning based on the amount of system RAM
-func calculateNethermindPruneMemSize() uint64 {
-	totalMemoryGB := memory.TotalMemory() / 1024 / 1024 / 1024
-
-	if totalMemoryGB == 0 {
-		return 0
-	} else if totalMemoryGB < 9 {
+	if totalMemoryGB < 9 {
 		return 512
-	} else if totalMemoryGB < 13 {
+	}
+	if totalMemoryGB < 13 {
 		return 512
-	} else if totalMemoryGB < 17 {
-		return 1024
-	} else if totalMemoryGB < 25 {
-		return 1024
-	} else if totalMemoryGB < 33 {
-		return 1024
-	} else {
+	}
+	if totalMemoryGB < 17 {
 		return 1024
 	}
-}
-
-// Calculate the recommended size for Nethermind's full pruning based on the amount of system RAM
-func calculateNethermindFullPruneMemBudget() uint64 {
-	totalMemoryGB := memory.TotalMemory() / 1024 / 1024 / 1024
-
-	if totalMemoryGB == 0 {
-		return 0
-	} else if totalMemoryGB < 9 {
+	if totalMemoryGB < 25 {
 		return 1024
-	} else if totalMemoryGB < 17 {
-		return 1024
-	} else if totalMemoryGB < 25 {
-		return 1024
-	} else if totalMemoryGB < 33 {
-		return 2048
-	} else {
-		return 4096
 	}
+	if totalMemoryGB < 33 {
+		return 1024
+	}
+	return 2048
 }
 
 // Calculate the default number of Nethermind peers
@@ -277,7 +242,7 @@ func (cfg *NethermindConfig) GetParameters() []*config.Parameter {
 	}
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *NethermindConfig) GetConfigTitle() string {
 	return cfg.Title
 }
