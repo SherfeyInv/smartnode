@@ -1,19 +1,19 @@
 package auction
 
 import (
-	"fmt"
 	"math/big"
 
-	"github.com/rocket-pool/rocketpool-go/auction"
-	"github.com/urfave/cli"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/auction"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canRecoverRplFromLot(c *cli.Context, lotIndex uint64) (*api.CanRecoverRPLFromLotResponse, error) {
+func canRecoverRplFromLot(c *cli.Command, lotIndex uint64) (*api.CanRecoverRPLFromLotResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -79,9 +79,9 @@ func canRecoverRplFromLot(c *cli.Context, lotIndex uint64) (*api.CanRecoverRPLFr
 		if err != nil {
 			return err
 		}
-		gasInfo, err := auction.EstimateRecoverUnclaimedRPLGas(rp, lotIndex, opts)
+		gasLimits, err := auction.EstimateRecoverUnclaimedRPLGas(rp, lotIndex, opts)
 		if err == nil {
-			response.GasInfo = gasInfo
+			response.GasLimits = gasLimits
 		}
 		return err
 	})
@@ -92,22 +92,18 @@ func canRecoverRplFromLot(c *cli.Context, lotIndex uint64) (*api.CanRecoverRPLFr
 	}
 
 	// Update & return response
-	response.CanRecover = !(response.DoesNotExist || response.BiddingNotEnded || response.NoUnclaimedRPL || response.RPLAlreadyRecovered)
+	response.CanRecover = !response.DoesNotExist && !response.BiddingNotEnded && !response.NoUnclaimedRPL && !response.RPLAlreadyRecovered
 	return &response, nil
 
 }
 
-func recoverRplFromLot(c *cli.Context, lotIndex uint64) (*api.RecoverRPLFromLotResponse, error) {
+func recoverRplFromLot(c *cli.Command, lotIndex uint64, opts *bind.TransactOpts) (*api.RecoverRPLFromLotResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
 		return nil, err
 	}
 	if err := services.RequireRocketStorage(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -117,18 +113,6 @@ func recoverRplFromLot(c *cli.Context, lotIndex uint64) (*api.RecoverRPLFromLotR
 
 	// Response
 	response := api.RecoverRPLFromLotResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Recover unclaimed RPL from lot
 	hash, err := auction.RecoverUnclaimedRPL(rp, lotIndex, opts)

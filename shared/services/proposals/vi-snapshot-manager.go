@@ -11,13 +11,14 @@ import (
 	"github.com/blang/semver/v4"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/network"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/types"
+
+	"github.com/rocket-pool/smartnode/bindings/network"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/types"
 	"github.com/rocket-pool/smartnode/shared"
+	log "github.com/rocket-pool/smartnode/shared/logger"
 	"github.com/rocket-pool/smartnode/shared/services/config"
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
-	"github.com/rocket-pool/smartnode/shared/utils/log"
 )
 
 const (
@@ -108,7 +109,7 @@ func (m *VotingInfoSnapshotManager) CreateVotingInfoSnapshot(blockNumber uint32)
 	}
 
 	return &VotingInfoSnapshot{
-		SmartnodeVersion: shared.RocketPoolVersion,
+		SmartnodeVersion: shared.RocketPoolVersion(),
 		Network:          m.cfg.Smartnode.Network.Value.(cfgtypes.Network),
 		BlockNumber:      blockNumber,
 		Info:             infos,
@@ -177,7 +178,7 @@ func (m *VotingInfoSnapshotManager) IsDataValid(data *VotingInfoSnapshot, filena
 		return false, nil
 	}
 	if snapshotVersion.LT(*m.latestCompatibleVersion) {
-		m.logMessage("%s File [%s] was made with Smartnode v%s which is not compatible (lowest compatible = v%s) so it cannot be used.", m.logPrefix, filename, data.SmartnodeVersion, latestCompatibleVersionString)
+		m.logMessage("%s File [%s] was made withSmart Node v%s which is not compatible (lowest compatible = v%s) so it cannot be used.", m.logPrefix, filename, data.SmartnodeVersion, latestCompatibleVersionString)
 		return false, nil
 	}
 

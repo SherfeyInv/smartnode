@@ -1,19 +1,18 @@
 package minipool
 
 import (
-	"fmt"
-
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/minipool"
-	"github.com/rocket-pool/rocketpool-go/types"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/minipool"
+	"github.com/rocket-pool/smartnode/bindings/types"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canDissolveMinipool(c *cli.Context, minipoolAddress common.Address) (*api.CanDissolveMinipoolResponse, error) {
+func canDissolveMinipool(c *cli.Command, minipoolAddress common.Address) (*api.CanDissolveMinipoolResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
@@ -51,16 +50,16 @@ func canDissolveMinipool(c *cli.Context, minipoolAddress common.Address) (*api.C
 	if err != nil {
 		return nil, err
 	}
-	response.InvalidStatus = !(status == types.Initialized || status == types.Prelaunch)
+	response.InvalidStatus = status != types.Initialized && status != types.Prelaunch
 
 	// Get gas estimate
 	opts, err := w.GetNodeAccountTransactor()
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := mp.EstimateDissolveGas(opts)
+	gasLimits, err := mp.EstimateDissolveGas(opts)
 	if err == nil {
-		response.GasInfo = gasInfo
+		response.GasLimits = gasLimits
 	}
 
 	// Update & return response
@@ -69,14 +68,10 @@ func canDissolveMinipool(c *cli.Context, minipoolAddress common.Address) (*api.C
 
 }
 
-func dissolveMinipool(c *cli.Context, minipoolAddress common.Address) (*api.DissolveMinipoolResponse, error) {
+func dissolveMinipool(c *cli.Command, minipoolAddress common.Address, opts *bind.TransactOpts) (*api.DissolveMinipoolResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -91,18 +86,6 @@ func dissolveMinipool(c *cli.Context, minipoolAddress common.Address) (*api.Diss
 	mp, err := minipool.NewMinipool(rp, minipoolAddress, nil)
 	if err != nil {
 		return nil, err
-	}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
 	}
 
 	// Dissolve

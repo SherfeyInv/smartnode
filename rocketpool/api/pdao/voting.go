@@ -1,18 +1,16 @@
 package pdao
 
 import (
-	"fmt"
-
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
-	"github.com/rocket-pool/rocketpool-go/network"
+	"github.com/rocket-pool/smartnode/bindings/network"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func estimateSetVotingDelegateGas(c *cli.Context, address common.Address) (*api.PDAOCanSetVotingDelegateResponse, error) {
+func estimateSetVotingDelegateGas(c *cli.Command, address common.Address) (*api.PDAOCanSetVotingDelegateResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -37,18 +35,18 @@ func estimateSetVotingDelegateGas(c *cli.Context, address common.Address) (*api.
 	}
 
 	// Get the gas info
-	gasInfo, err := network.EstimateSetVotingDelegateGas(rp, address, opts)
+	gasLimits, err := network.EstimateSetVotingDelegateGas(rp, address, opts)
 	if err != nil {
 		return nil, err
 	}
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 
 	// Return response
 	return &response, nil
 
 }
 
-func setVotingDelegate(c *cli.Context, address common.Address) (*api.PDAOSetVotingDelegateResponse, error) {
+func setVotingDelegate(c *cli.Command, address common.Address, opts *bind.TransactOpts) (*api.PDAOSetVotingDelegateResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -58,25 +56,8 @@ func setVotingDelegate(c *cli.Context, address common.Address) (*api.PDAOSetVoti
 	if err != nil {
 		return nil, err
 	}
-	w, err := services.GetWallet(c)
-	if err != nil {
-		return nil, err
-	}
-
 	// Response
 	response := api.PDAOSetVotingDelegateResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Set the delegate
 	tx, err := network.SetVotingDelegate(rp, address, opts)
@@ -90,7 +71,7 @@ func setVotingDelegate(c *cli.Context, address common.Address) (*api.PDAOSetVoti
 
 }
 
-func getCurrentVotingDelegate(c *cli.Context) (*api.PDAOCurrentVotingDelegateResponse, error) {
+func getCurrentVotingDelegate(c *cli.Command) (*api.PDAOCurrentVotingDelegateResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {

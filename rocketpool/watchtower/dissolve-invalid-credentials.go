@@ -1,0 +1,204 @@
+package watchtower
+
+import (
+	"bytes"
+
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/megapool"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/transactions"
+	"github.com/rocket-pool/smartnode/bindings/types"
+	"github.com/rocket-pool/smartnode/rocketpool/watchtower/utils"
+	log "github.com/rocket-pool/smartnode/shared/logger"
+	"github.com/rocket-pool/smartnode/shared/math"
+	"github.com/rocket-pool/smartnode/shared/services"
+	"github.com/rocket-pool/smartnode/shared/services/config"
+	"github.com/rocket-pool/smartnode/shared/services/state"
+	"github.com/rocket-pool/smartnode/shared/services/wallet"
+)
+
+// Dissolve timed out minipools task
+type dissolveInvalidCredentials struct {
+	c   *cli.Command
+	log log.ColorLogger
+	cfg *config.RocketPoolConfig
+	w   wallet.Wallet
+	ec  rocketpool.ExecutionClient
+	rp  *rocketpool.RocketPool
+	bc  *services.BeaconClientManager
+}
+
+const FarFutureEpoch uint64 = 0xffffffffffffffff
+
+// Create dissolve timed out megapool validators task
+func newDissolveInvalidCredentials(c *cli.Command, logger log.ColorLogger) (*dissolveInvalidCredentials, error) {
+
+	// Get services
+	cfg, err := services.GetConfig(c)
+	if err != nil {
+		return nil, err
+	}
+	w, err := services.GetWallet(c)
+	if err != nil {
+		return nil, err
+	}
+	ec, err := services.GetEthClient(c)
+	if err != nil {
+		return nil, err
+	}
+	rp, err := services.GetRocketPool(c)
+	if err != nil {
+		return nil, err
+	}
+	// Get the beacon client
+	bc, err := services.GetBeaconClient(c)
+	if err != nil {
+		return nil, err
+	}
+
+	// Return task
+	return &dissolveInvalidCredentials{
+		c:   c,
+		log: logger,
+		cfg: cfg,
+		w:   w,
+		ec:  ec,
+		rp:  rp,
+		bc:  bc,
+	}, nil
+
+}
+
+// Dissolve timed out megapool validators
+func (t *dissolveInvalidCredentials) run(state *state.NetworkState) error {
+	// Wait for eth client to sync
+	if err := services.WaitEthClientSynced(t.c, true); err != nil {
+		return err
+	}
+	// Log
+	t.log.Println("Checking for invalid info on megapool validators to dissolve...")
+
+	// Dissolve validators
+	err := t.dissolveInvalidCredentialValidators(state)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Get megapool validators that can be dissolved due to using invalid credentials
+func (t *dissolveInvalidCredentials) dissolveInvalidCredentialValidators(state *state.NetworkState) error {
+
+	for _, validator := range state.MegapoolValidatorGlobalIndex {
+		if validator.ValidatorInfo.InPrestake {
+			expectedWithdrawalAddress := services.CalculateMegapoolWithdrawalCredentials(validator.MegapoolAddress)
+			// Fetch the validator from the beacon state to compare credentials
+			validatorFromState, err := t.bc.GetValidatorStatus(types.ValidatorPubkey(validator.Pubkey), nil)
+			if err != nil {
+				pubkey := types.BytesToValidatorPubkey(validator.Pubkey).String()
+				t.log.Printlnf("error getting the beacon state for validator 0x%s on megapool %s: %s", pubkey, validator.MegapoolAddress, err)
+				continue
+			}
+			if !validatorFromState.Exists {
+				continue
+			}
+			if !bytes.Equal(validatorFromState.WithdrawalCredentials.Bytes(), expectedWithdrawalAddress.Bytes()) {
+				t.log.Printlnf("Validator %s has an invalid credential %s while the expected is %s. Dissolving...", validatorFromState.Index, validatorFromState.WithdrawalCredentials, expectedWithdrawalAddress.Bytes())
+				t.dissolveMegapoolValidator(validator)
+			}
+			// Withdrawable epoch should be FAR_FUTURE_EPOCH
+			if validatorFromState.WithdrawableEpoch != FarFutureEpoch {
+				t.log.Printlnf("Validator %s has a withdrawable epoch of %d while the expected is %d. Dissolving...", validatorFromState.Index, validatorFromState.WithdrawableEpoch, FarFutureEpoch)
+				t.dissolveMegapoolValidator(validator)
+			}
+			// Exit epoch should be FAR_FUTURE_EPOCH
+			if validatorFromState.ExitEpoch != FarFutureEpoch {
+				t.log.Printlnf("Validator %s has an exit epoch of %d while the expected is %d. Dissolving...", validatorFromState.Index, validatorFromState.ExitEpoch, FarFutureEpoch)
+				t.dissolveMegapoolValidator(validator)
+			}
+			// Slashed should be false
+			if validatorFromState.Slashed {
+				t.log.Printlnf("Validator %s is slashed while the expected is false. Dissolving...", validatorFromState.Index)
+				t.dissolveMegapoolValidator(validator)
+			}
+			// Effective balance should be less than 32 ETH
+			if validatorFromState.EffectiveBalance >= 32000000000 {
+				t.log.Printlnf("Validator %s has an effective balance of %d while the expected is less than 32 ETH. Dissolving...", validatorFromState.Index, validatorFromState.EffectiveBalance)
+				t.dissolveMegapoolValidator(validator)
+			}
+			// Activation eligibility epoch should be FAR_FUTURE_EPOCH
+			if validatorFromState.ActivationEligibilityEpoch != FarFutureEpoch {
+				t.log.Printlnf("Validator %s has an activation eligibility epoch of %d while the expected is %d. Dissolving...", validatorFromState.Index, validatorFromState.ActivationEligibilityEpoch, FarFutureEpoch)
+				t.dissolveMegapoolValidator(validator)
+			}
+			// Activation epoch should be FAR_FUTURE_EPOCH
+			if validatorFromState.ActivationEpoch != FarFutureEpoch {
+				t.log.Printlnf("Validator %s has an activation epoch of %d while the expected is %d. Dissolving...", validatorFromState.Index, validatorFromState.ActivationEpoch, FarFutureEpoch)
+				t.dissolveMegapoolValidator(validator)
+			}
+		}
+
+	}
+	return nil
+}
+
+func (t *dissolveInvalidCredentials) dissolveMegapoolValidator(validator megapool.ValidatorInfoFromGlobalIndex) {
+	// Log
+	t.log.Printlnf("Dissolving megapool validator ID: %d from megapool %s...", validator.ValidatorId, validator.MegapoolAddress)
+
+	// Get transactor
+	opts, err := t.w.GetNodeAccountTransactor()
+	if err != nil {
+		t.log.Printlnf("error getting the node account transactor: %v", err)
+		return
+	}
+
+	eth2Config, err := t.bc.GetEth2Config()
+	if err != nil {
+		t.log.Printlnf("error getting the eth2 config: %v", err)
+		return
+	}
+
+	validatorProof, slotTimestamp, slotProof, err := services.GetValidatorProof(t.c, 0, t.w, eth2Config, validator.MegapoolAddress, types.ValidatorPubkey(validator.Pubkey), nil)
+	if err != nil {
+		t.log.Printlnf("error getting validator proof: %v", err)
+		return
+	}
+
+	// Get the gas limit
+	gasLimits, err := megapool.EstimateDissolveWithProof(t.rp, validator.MegapoolAddress, validator.ValidatorId, slotTimestamp, validatorProof, slotProof, opts)
+	if err != nil {
+		t.log.Printlnf("error estimating the gas required to dissolve the validator: %v", err)
+		return
+	}
+
+	// Print the gas info
+	maxFee := math.GweiToWei(utils.GetWatchtowerMaxFee(t.cfg))
+	if !gasLimits.PrintAndCheck(false, 0, &t.log, maxFee, 0) {
+		return
+	}
+
+	// Set the gas settings
+	opts.GasFeeCap = maxFee
+	opts.GasTipCap = math.GweiToWei(utils.GetWatchtowerPrioFee(t.cfg))
+	opts.GasLimit = gasLimits.Safe
+
+	// Dissolve
+	tx, err := megapool.DissolveWithProof(t.rp, validator.MegapoolAddress, validator.ValidatorId, slotTimestamp, validatorProof, slotProof, opts)
+	if err != nil {
+		t.log.Printlnf("error dissolving the validator: %v", err)
+		return
+	}
+
+	// Print TX info and wait for it to be included in a block
+	err = transactions.PrintAndWaitForTransaction(t.cfg, tx.Hash(), t.rp.Client, &t.log)
+	if err != nil {
+		t.log.Printlnf("error waiting for the transaction to be included in a block: %v", err)
+		return
+	}
+
+	// Log
+	t.log.Printlnf("Successfully dissolved megapool validator ID: %s from megapool %s. (Invalid credentials)", validator.ValidatorId, validator.MegapoolAddress)
+}

@@ -7,15 +7,16 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
+
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/color"
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
-	"github.com/urfave/cli"
 )
 
-func getActiveDAOProposals(c *cli.Context) error {
+func getActiveDAOProposals() error {
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -40,13 +41,12 @@ func getActiveDAOProposals(c *cli.Context) error {
 	}
 
 	// Voting status
-	fmt.Printf("%s=== Snapshot Voting ===%s\n", colorGreen, colorReset)
+	color.GreenPrintln("=== Snapshot Voting ===")
 	blankAddress := common.Address{}
 	if snapshotProposalsResponse.SignallingAddress == blankAddress {
 		fmt.Printf("The node does not currently have a snapshot signalling address set.\nTo learn more about snapshot signalling, please visit %s.\n", signallingAddressLink)
 	} else {
-		fmt.Printf("The node has a signalling address of %s%s%s which can represent it when voting on Rocket Pool Snapshot governance proposals.", colorBlue, snapshotProposalsResponse.SignallingAddressFormatted, colorReset)
-		fmt.Println()
+		fmt.Println("The node has a signalling address of", color.LightBlue(snapshotProposalsResponse.SignallingAddressFormatted), "which can represent it when voting on Rocket Pool Snapshot governance proposals.")
 	}
 
 	voteCount := snapshotProposalsResponse.SnapshotResponse.VoteCount()
@@ -66,7 +66,10 @@ func getActiveDAOProposals(c *cli.Context) error {
 			fmt.Printf("End: %s (in %s) \n", cliutils.GetDateTimeString(uint64(proposal.End)), time.Until(time.Unix(proposal.End, 0)).Round(time.Second))
 			scoresBuilder := strings.Builder{}
 			for i, score := range proposal.Scores {
-				scoresBuilder.WriteString(fmt.Sprintf("[%s = %.2f] ", proposal.Choices[i], score))
+				_, err = fmt.Fprintf(&scoresBuilder, "[%s = %.2f] ", proposal.Choices[i], score)
+				if err != nil {
+					return fmt.Errorf("error writing scores: %w", err)
+				}
 			}
 			fmt.Printf("Scores: %s\n", scoresBuilder.String())
 			quorumResult := ""
@@ -120,12 +123,12 @@ func getActiveDAOProposals(c *cli.Context) error {
 						votedChoices = fmt.Sprintf("%v", proposalVote.Choice)
 					}
 
-					fmt.Printf("%s%s voted [%s] on this proposal\n%s", colorGreen, voter, votedChoices, colorReset)
+					color.GreenPrintf("%s voted [%s] on this proposal\n", voter, votedChoices)
 					voted = true
 				}
 			}
 			if !voted {
-				fmt.Printf("%sYou have NOT voted on this proposal yet\n%s", colorYellow, colorReset)
+				color.YellowPrintln("You have NOT voted on this proposal yet")
 			}
 		}
 
@@ -133,29 +136,25 @@ func getActiveDAOProposals(c *cli.Context) error {
 	fmt.Println()
 
 	// Onchain Voting Status
-	fmt.Printf("%s=== Onchain Voting ===%s\n", colorGreen, colorReset)
-	if snapshotProposalsResponse.IsVotingInitialized {
-		fmt.Printf("The node %s%s%s has been initialized for onchain voting.\n", colorBlue, snapshotProposalsResponse.AccountAddressFormatted, colorReset)
-	} else {
-		fmt.Printf("The node %s%s%s has NOT been initialized for onchain voting. You need to run `rocketpool pdao initialize-voting` to participate in onchain votes.\n", colorBlue, snapshotProposalsResponse.AccountAddressFormatted, colorReset)
-	}
+	color.GreenPrintln("=== Onchain Voting ===")
 
-	if snapshotProposalsResponse.OnchainVotingDelegate == blankAddress {
+	switch snapshotProposalsResponse.OnchainVotingDelegate {
+	case blankAddress:
 		fmt.Println("The node doesn't have a delegate, which means it can vote directly on onchain proposals after it initializes voting.")
-	} else if snapshotProposalsResponse.OnchainVotingDelegate == snapshotProposalsResponse.AccountAddress {
+	case snapshotProposalsResponse.AccountAddress:
 		fmt.Println("The node doesn't have a delegate, which means it can vote directly on onchain proposals. You can have another node represent you by running `rocketpool p svd <address>`.")
-	} else {
-		fmt.Printf("The node has a voting delegate of %s%s%s which can represent it when voting on Rocket Pool onchain governance proposals.\n", colorBlue, snapshotProposalsResponse.OnchainVotingDelegateFormatted, colorReset)
+	default:
+		fmt.Println("The node has a voting delegate of", color.LightBlue(snapshotProposalsResponse.OnchainVotingDelegateFormatted), "which can represent it when voting on Rocket Pool onchain governance proposals.")
 	}
-	fmt.Printf("The node's local voting power: %.10f\n", eth.WeiToEth(snapshotProposalsResponse.VotingPower))
+	fmt.Printf("The node's local voting power: %.10f\n", math.WeiToEth(snapshotProposalsResponse.VotingPower))
 
 	if snapshotProposalsResponse.IsNodeRegistered {
-		fmt.Printf("Total voting power delegated to the node: %.10f\n", eth.WeiToEth(snapshotProposalsResponse.TotalDelegatedVp))
+		fmt.Printf("Total voting power delegated to the node: %.10f\n", math.WeiToEth(snapshotProposalsResponse.TotalDelegatedVp))
 	} else {
 		fmt.Println("The node must register using 'rocketpool node register' to be eligible to receive delegated voting power.")
 	}
 
-	fmt.Printf("Network total initialized voting power: %.4f\n", eth.WeiToEth(snapshotProposalsResponse.SumVotingPower))
+	fmt.Printf("Network total initialized voting power: %.4f\n", math.WeiToEth(snapshotProposalsResponse.SumVotingPower))
 	fmt.Println()
 
 	return nil

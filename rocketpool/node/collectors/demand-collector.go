@@ -1,11 +1,10 @@
 package collectors
 
 import (
-	"fmt"
-
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
+
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/shared/math"
 )
 
 const namespace = "rocketpool"
@@ -84,10 +83,10 @@ func (collector *DemandCollector) Collect(channel chan<- prometheus.Metric) {
 		return
 	}
 
-	balanceFloat := eth.WeiToEth(state.NetworkDetails.DepositPoolBalance)
-	excessFloat := eth.WeiToEth(state.NetworkDetails.DepositPoolExcess)
-	totalFloat := eth.WeiToEth(state.NetworkDetails.QueueCapacity.Total)
-	effectiveFloat := eth.WeiToEth(state.NetworkDetails.QueueCapacity.Effective)
+	balanceFloat := math.WeiToEth(state.NetworkDetails.DepositPoolBalance)
+	excessFloat := math.WeiToEth(state.NetworkDetails.DepositPoolExcess)
+	totalFloat := math.WeiToEth(state.NetworkDetails.QueueCapacity.Total)
+	effectiveFloat := math.WeiToEth(state.NetworkDetails.QueueCapacity.Effective)
 	queueLength := float64(state.NetworkDetails.QueueLength.Uint64())
 
 	channel <- prometheus.MustNewConstMetric(
@@ -100,9 +99,4 @@ func (collector *DemandCollector) Collect(channel chan<- prometheus.Metric) {
 		collector.effectiveMinipoolCapacity, prometheus.GaugeValue, effectiveFloat)
 	channel <- prometheus.MustNewConstMetric(
 		collector.queueLength, prometheus.GaugeValue, queueLength)
-}
-
-// Log error messages
-func (collector *DemandCollector) logError(err error) {
-	fmt.Printf("[%s] %s\n", collector.logPrefix, err.Error())
 }

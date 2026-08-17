@@ -6,19 +6,20 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/rocket-pool/rocketpool-go/minipool"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	rptypes "github.com/rocket-pool/rocketpool-go/types"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/minipool"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/transactions"
+	rptypes "github.com/rocket-pool/smartnode/bindings/types"
 
 	"github.com/rocket-pool/smartnode/rocketpool/watchtower/utils"
+	log "github.com/rocket-pool/smartnode/shared/logger"
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/services/config"
 	"github.com/rocket-pool/smartnode/shared/services/state"
 	"github.com/rocket-pool/smartnode/shared/services/wallet"
-	"github.com/rocket-pool/smartnode/shared/utils/api"
-	"github.com/rocket-pool/smartnode/shared/utils/log"
 )
 
 // Settings
@@ -26,16 +27,16 @@ const MinipoolStatusBatchSize = 20
 
 // Dissolve timed out minipools task
 type dissolveTimedOutMinipools struct {
-	c   *cli.Context
+	c   *cli.Command
 	log log.ColorLogger
 	cfg *config.RocketPoolConfig
-	w   *wallet.Wallet
+	w   wallet.Wallet
 	ec  rocketpool.ExecutionClient
 	rp  *rocketpool.RocketPool
 }
 
 // Create dissolve timed out minipools task
-func newDissolveTimedOutMinipools(c *cli.Context, logger log.ColorLogger) (*dissolveTimedOutMinipools, error) {
+func newDissolveTimedOutMinipools(c *cli.Command, logger log.ColorLogger) (*dissolveTimedOutMinipools, error) {
 
 	// Get services
 	cfg, err := services.GetConfig(c)
@@ -145,21 +146,21 @@ func (t *dissolveTimedOutMinipools) dissolveMinipool(mp minipool.Minipool) error
 	}
 
 	// Get the gas limit
-	gasInfo, err := mp.EstimateDissolveGas(opts)
+	gasLimits, err := mp.EstimateDissolveGas(opts)
 	if err != nil {
 		return fmt.Errorf("Could not estimate the gas required to dissolve the minipool: %w", err)
 	}
 
 	// Print the gas info
-	maxFee := eth.GweiToWei(utils.GetWatchtowerMaxFee(t.cfg))
-	if !api.PrintAndCheckGasInfo(gasInfo, false, 0, &t.log, maxFee, 0) {
+	maxFee := math.GweiToWei(utils.GetWatchtowerMaxFee(t.cfg))
+	if !gasLimits.PrintAndCheck(false, 0, &t.log, maxFee, 0) {
 		return nil
 	}
 
 	// Set the gas settings
 	opts.GasFeeCap = maxFee
-	opts.GasTipCap = eth.GweiToWei(utils.GetWatchtowerPrioFee(t.cfg))
-	opts.GasLimit = gasInfo.SafeGasLimit
+	opts.GasTipCap = math.GweiToWei(utils.GetWatchtowerPrioFee(t.cfg))
+	opts.GasLimit = gasLimits.Safe
 
 	// Dissolve
 	hash, err := mp.Dissolve(opts)
@@ -168,7 +169,7 @@ func (t *dissolveTimedOutMinipools) dissolveMinipool(mp minipool.Minipool) error
 	}
 
 	// Print TX info and wait for it to be included in a block
-	err = api.PrintAndWaitForTransaction(t.cfg, hash, t.rp.Client, &t.log)
+	err = transactions.PrintAndWaitForTransaction(t.cfg, hash, t.rp.Client, &t.log)
 	if err != nil {
 		return err
 	}

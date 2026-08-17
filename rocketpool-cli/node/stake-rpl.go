@@ -4,20 +4,24 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
-	"github.com/urfave/cli"
-
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
-	"github.com/rocket-pool/smartnode/shared/utils/math"
 )
 
-func nodeStakeRpl(c *cli.Context) error {
+// Config
+const (
+	stakeRPLDisclaimer = "NOTE: By staking RPL, you become a member of the Rocket Pool pDAO. Stay informed on governance proposals by joining the Rocket Pool Discord."
+)
+
+func nodeStakeRpl(amount string, swap bool, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -29,8 +33,18 @@ func nodeStakeRpl(c *cli.Context) error {
 		return err
 	}
 
+	// Show the pDAO disclaimer
+	fmt.Println(stakeRPLDisclaimer)
+	fmt.Println()
+
+	// Show current RPL balances
+	fmt.Printf("The node has a balance of %.6f RPL.\n\n", math.RoundDown(math.WeiToEth(status.AccountBalances.RPL), 6))
+	if status.AccountBalances.FixedSupplyRPL.Cmp(big.NewInt(0)) > 0 {
+		fmt.Printf("The node has a balance of %.6f old RPL which can be swapped for new RPL.\n\n", math.RoundDown(math.WeiToEth(status.AccountBalances.FixedSupplyRPL), 6))
+	}
+
 	// If a custom nonce is set, print the multi-transaction warning
-	if c.GlobalUint64("nonce") != 0 {
+	if rocketpool.Defaults.CustomNonce != nil {
 		cliutils.PrintMultiTransactionNonceWarning()
 	}
 
@@ -39,7 +53,7 @@ func nodeStakeRpl(c *cli.Context) error {
 	if status.AccountBalances.FixedSupplyRPL.Cmp(big.NewInt(0)) > 0 {
 
 		// Confirm swapping RPL
-		if c.Bool("swap") || cliutils.Confirm(fmt.Sprintf("The node has a balance of %.6f old RPL. Would you like to swap it for new RPL before staking?", math.RoundDown(eth.WeiToEth(status.AccountBalances.FixedSupplyRPL), 6))) {
+		if swap || prompt.Confirm("The node has a balance of %.6f old RPL. Would you like to swap it for new RPL before staking?", math.RoundDown(math.WeiToEth(status.AccountBalances.FixedSupplyRPL), 6)) {
 
 			// Check allowance
 			allowance, err := rp.GetNodeSwapRplAllowance()
@@ -52,7 +66,7 @@ func nodeStakeRpl(c *cli.Context) error {
 				fmt.Println("This only needs to be done once for your node.")
 
 				// If a custom nonce is set, print the multi-transaction warning
-				if c.GlobalUint64("nonce") != 0 {
+				if rocketpool.Defaults.CustomNonce != nil {
 					cliutils.PrintMultiTransactionNonceWarning()
 				}
 
@@ -67,13 +81,13 @@ func nodeStakeRpl(c *cli.Context) error {
 					return err
 				}
 				// Assign max fees
-				err = gas.AssignMaxFeeAndLimit(approvalGas.GasInfo, rp, c.Bool("yes"))
+				err = gas.AssignMaxFeeAndLimit(approvalGas.GasLimits, rp, yes)
 				if err != nil {
 					return err
 				}
 
 				// Prompt for confirmation
-				if !(c.Bool("yes") || cliutils.Confirm("Do you want to let the new RPL contract interact with your legacy RPL?")) {
+				if prompt.Declined(yes, "Do you want to let the new RPL contract interact with your legacy RPL?") {
 					fmt.Println("Cancelled.")
 					return nil
 				}
@@ -92,7 +106,7 @@ func nodeStakeRpl(c *cli.Context) error {
 				fmt.Println("Successfully approved access to legacy RPL.")
 
 				// If a custom nonce is set, increment it for the next transaction
-				if c.GlobalUint64("nonce") != 0 {
+				if rocketpool.Defaults.CustomNonce != nil {
 					rp.IncrementCustomNonce()
 				}
 			}
@@ -111,13 +125,13 @@ func nodeStakeRpl(c *cli.Context) error {
 			}
 			fmt.Println("RPL Swap Gas Info:")
 			// Assign max fees
-			err = gas.AssignMaxFeeAndLimit(canSwap.GasInfo, rp, c.Bool("yes"))
+			err = gas.AssignMaxFeeAndLimit(canSwap.GasLimits, rp, yes)
 			if err != nil {
 				return err
 			}
 
 			// Prompt for confirmation
-			if !(c.Bool("yes") || cliutils.Confirm(fmt.Sprintf("Are you sure you want to swap %.6f old RPL for new RPL?", math.RoundDown(eth.WeiToEth(status.AccountBalances.FixedSupplyRPL), 6)))) {
+			if prompt.Declined(yes, "Are you sure you want to swap %.6f old RPL for new RPL?", math.RoundDown(math.WeiToEth(status.AccountBalances.FixedSupplyRPL), 6)) {
 				fmt.Println("Cancelled.")
 				return nil
 			}
@@ -135,11 +149,11 @@ func nodeStakeRpl(c *cli.Context) error {
 			}
 
 			// Log
-			fmt.Printf("Successfully swapped %.6f old RPL for new RPL.\n", math.RoundDown(eth.WeiToEth(status.AccountBalances.FixedSupplyRPL), 6))
+			fmt.Printf("Successfully swapped %.6f old RPL for new RPL.\n", math.RoundDown(math.WeiToEth(status.AccountBalances.FixedSupplyRPL), 6))
 			fmt.Println("")
 
 			// If a custom nonce is set, increment it for the next transaction
-			if c.GlobalUint64("nonce") != 0 {
+			if rocketpool.Defaults.CustomNonce != nil {
 				rp.IncrementCustomNonce()
 			}
 
@@ -150,77 +164,82 @@ func nodeStakeRpl(c *cli.Context) error {
 
 	}
 
-	// Get stake amount
+	// Get RPL price
+	rplPrice, err := rp.RplPrice()
+	if err != nil {
+		return err
+	}
 	var amountWei *big.Int
-	if c.String("amount") == "min8" {
+	var stakePercent float64
+	// Borrow amount for a new megapool validator
+	ethBorrowed := new(big.Int).Sub(math.EthToWei(32), status.ReducedBond)
 
-		// Set amount to min per 8 ETH minipool RPL stake
-		rplPrice, err := rp.RplPrice()
+	// Amount flag custom percentage input
+	if strings.HasSuffix(amount, "%") {
+		_, err := fmt.Sscanf(amount, "%f%%", &stakePercent)
 		if err != nil {
-			return err
+			return fmt.Errorf("Invalid stake amount '%s': %w", amount, err)
 		}
-		amountWei = rplPrice.MinPer8EthMinipoolRplStake
+		amountWei = rplStakePerValidator(ethBorrowed, math.EthToWei(stakePercent/100), rplPrice.RplPrice)
 
-	} else if c.String("amount") == "min16" {
-
-		// Set amount to min per 16 ETH minipool RPL stake
-		rplPrice, err := rp.RplPrice()
-		if err != nil {
-			return err
-		}
-		amountWei = rplPrice.MinPer16EthMinipoolRplStake
-
-	} else if c.String("amount") == "all" {
-
+	} else if amount == "all" {
 		// Set amount to node's entire RPL balance
 		amountWei = &rplBalance
 
-	} else if c.String("amount") != "" {
-
+	} else if amount != "" {
 		// Parse amount
-		stakeAmount, err := strconv.ParseFloat(c.String("amount"), 64)
+		stakeAmount, err := strconv.ParseFloat(amount, 64)
 		if err != nil {
-			return fmt.Errorf("Invalid stake amount '%s': %w", c.String("amount"), err)
+			return fmt.Errorf("Invalid stake amount '%s': %w", amount, err)
 		}
-		amountWei = eth.EthToWei(stakeAmount)
+		amountWei = math.EthToWei(stakeAmount)
 
 	} else {
-
-		// Get min/max per minipool RPL stake amounts
-		rplPrice, err := rp.RplPrice()
-		if err != nil {
-			return err
-		}
-		minAmount8 := rplPrice.MinPer8EthMinipoolRplStake
-		minAmount16 := rplPrice.MinPer16EthMinipoolRplStake
+		// Get the RPL stake amounts for 5,10,15% borrowed ETH per Validator
+		fivePercentBorrowedPerValidator := new(big.Int)
+		fivePercentBorrowedPerValidator.SetString("50000000000000000", 10)
+		fivePercentBorrowedRplStake := rplStakePerValidator(ethBorrowed, fivePercentBorrowedPerValidator, rplPrice.RplPrice)
+		tenPercentBorrowedRplStake := new(big.Int).Mul(fivePercentBorrowedRplStake, big.NewInt(2))
+		fifteenPercentBorrowedRplStake := new(big.Int).Mul(fivePercentBorrowedRplStake, big.NewInt(3))
 
 		// Prompt for amount option
 		amountOptions := []string{
-			fmt.Sprintf("The minimum minipool stake amount for an 8-ETH minipool (%.6f RPL)?", math.RoundUp(eth.WeiToEth(minAmount8), 6)),
-			fmt.Sprintf("The minimum minipool stake amount for a 16-ETH minipool (%.6f RPL)?", math.RoundUp(eth.WeiToEth(minAmount16), 6)),
-			fmt.Sprintf("Your entire RPL balance (%.6f RPL)?", math.RoundDown(eth.WeiToEth(&rplBalance), 6)),
+			fmt.Sprintf("5%% of borrowed ETH (%.6f RPL) for one validator?", math.RoundUp(math.WeiToEth(fivePercentBorrowedRplStake), 6)),
+			fmt.Sprintf("10%% of borrowed ETH (%.6f RPL) for one validator?", math.RoundUp(math.WeiToEth(tenPercentBorrowedRplStake), 6)),
+			fmt.Sprintf("15%% of borrowed ETH (%.6f RPL) for one validator?", math.RoundUp(math.WeiToEth(fifteenPercentBorrowedRplStake), 6)),
+			fmt.Sprintf("Your entire RPL balance (%.6f RPL)?", math.RoundDown(math.WeiToEth(&rplBalance), 6)),
 			"A custom amount",
 		}
-		selected, _ := cliutils.Select("Please choose an amount of RPL to stake:", amountOptions)
+		selected, _ := prompt.Select("Please choose an amount of RPL to stake:", amountOptions)
+
 		switch selected {
 		case 0:
-			amountWei = minAmount8
+			amountWei = fivePercentBorrowedRplStake
 		case 1:
-			amountWei = minAmount16
+			amountWei = tenPercentBorrowedRplStake
 		case 2:
+			amountWei = fifteenPercentBorrowedRplStake
+		case 3:
 			amountWei = &rplBalance
 		}
 
-		// Prompt for custom amount
+		// Prompt for custom amount or percentage
 		if amountWei == nil {
-			inputAmount := cliutils.Prompt("Please enter an amount of RPL to stake:", "^\\d+(\\.\\d+)?$", "Invalid amount")
-			stakeAmount, err := strconv.ParseFloat(inputAmount, 64)
-			if err != nil {
-				return fmt.Errorf("Invalid stake amount '%s': %w", inputAmount, err)
+			inputAmountOrPercent := prompt.Prompt("Please enter an amount of RPL or percentage of borrowed ETH to stake. (e.g '50' for 50 RPL or '5%' for 5% borrowed ETH as RPL):", "^(0|[1-9]\\d*)(\\.\\d+)?%?$", "Invalid amount")
+			if strings.HasSuffix(inputAmountOrPercent, "%") {
+				_, err := fmt.Sscanf(inputAmountOrPercent, "%f%%", &stakePercent)
+				if err != nil {
+					return fmt.Errorf("Invalid stake amount '%s': %w", inputAmountOrPercent, err)
+				}
+				amountWei = rplStakePerValidator(ethBorrowed, math.EthToWei(stakePercent/100), rplPrice.RplPrice)
+			} else {
+				stakeAmount, err := strconv.ParseFloat(inputAmountOrPercent, 64)
+				if err != nil {
+					return fmt.Errorf("Invalid stake amount '%s': %w", inputAmountOrPercent, err)
+				}
+				amountWei = math.EthToWei(stakeAmount)
 			}
-			amountWei = eth.EthToWei(stakeAmount)
 		}
-
 	}
 
 	// Check allowance
@@ -234,7 +253,7 @@ func nodeStakeRpl(c *cli.Context) error {
 		fmt.Println("This only needs to be done once for your node.")
 
 		// If a custom nonce is set, print the multi-transaction warning
-		if c.GlobalUint64("nonce") != 0 {
+		if rocketpool.Defaults.CustomNonce != nil {
 			cliutils.PrintMultiTransactionNonceWarning()
 		}
 
@@ -249,13 +268,13 @@ func nodeStakeRpl(c *cli.Context) error {
 			return err
 		}
 		// Assign max fees
-		err = gas.AssignMaxFeeAndLimit(approvalGas.GasInfo, rp, c.Bool("yes"))
+		err = gas.AssignMaxFeeAndLimit(approvalGas.GasLimits, rp, yes)
 		if err != nil {
 			return err
 		}
 
 		// Prompt for confirmation
-		if !(c.Bool("yes") || cliutils.Confirm("Do you want to let the staking contract interact with your RPL?")) {
+		if prompt.Declined(yes, "Do you want to let the staking contract interact with your RPL?") {
 			fmt.Println("Cancelled.")
 			return nil
 		}
@@ -274,7 +293,7 @@ func nodeStakeRpl(c *cli.Context) error {
 		fmt.Println("Successfully approved staking access to RPL.")
 
 		// If a custom nonce is set, increment it for the next transaction
-		if c.GlobalUint64("nonce") != 0 {
+		if rocketpool.Defaults.CustomNonce != nil {
 			rp.IncrementCustomNonce()
 		}
 	}
@@ -294,13 +313,15 @@ func nodeStakeRpl(c *cli.Context) error {
 
 	fmt.Println("RPL Stake Gas Info:")
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canStake.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canStake.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm(fmt.Sprintf("Are you sure you want to stake %.6f RPL? You will not be able to unstake this RPL until you exit your validators and close your minipools, or reach over 100%% collateral!", math.RoundDown(eth.WeiToEth(amountWei), 6)))) {
+	if prompt.Declined(yes, "Are you sure you want to stake %.6f RPL? You may request to unstake your staked RPL at any time. The unstaked RPL will be withdrawable after an unstaking period of %s.",
+		math.RoundDown(math.WeiToEth(amountWei), 6),
+		status.UnstakingPeriodDuration) {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -318,7 +339,17 @@ func nodeStakeRpl(c *cli.Context) error {
 	}
 
 	// Log & return
-	fmt.Printf("Successfully staked %.6f RPL.\n", math.RoundDown(eth.WeiToEth(amountWei), 6))
+	fmt.Printf("Successfully staked %.6f RPL.\n", math.RoundDown(math.WeiToEth(amountWei), 6))
 	return nil
+
+}
+
+func rplStakePerValidator(ethBorrowed *big.Int, percentBorrowedPerValidator *big.Int, rplPrice *big.Int) *big.Int {
+	percentBorrowedRplStake := big.NewInt(0)
+	percentBorrowedRplStake.Mul(ethBorrowed, percentBorrowedPerValidator)
+	percentBorrowedRplStake.Div(percentBorrowedRplStake, rplPrice)
+	amountWei := percentBorrowedRplStake
+
+	return amountWei
 
 }

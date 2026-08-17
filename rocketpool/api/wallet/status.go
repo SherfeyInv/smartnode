@@ -1,15 +1,20 @@
 package wallet
 
 import (
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
 	"github.com/rocket-pool/smartnode/shared/services"
+	"github.com/rocket-pool/smartnode/shared/services/wallet"
 	"github.com/rocket-pool/smartnode/shared/types/api"
 )
 
-func getStatus(c *cli.Context) (*api.WalletStatusResponse, error) {
+func getStatus(c *cli.Command) (*api.WalletStatusResponse, error) {
 
 	// Get services
+	cfg, err := services.GetConfig(c)
+	if err != nil {
+		return nil, err
+	}
 	pm, err := services.GetPasswordManager(c)
 	if err != nil {
 		return nil, err
@@ -22,20 +27,31 @@ func getStatus(c *cli.Context) (*api.WalletStatusResponse, error) {
 	// Response
 	response := api.WalletStatusResponse{}
 
+	// Get wallet type
+	response.IsMasquerading = w.IsNodeMasquerading()
+	response.IsObserve = wallet.CheckObserveMode(cfg.Smartnode.GetNodeAddressPath())
+
 	// Get wallet status
-	response.PasswordSet = pm.IsPasswordSet()
-	response.WalletInitialized = w.IsInitialized()
+	if response.IsMasquerading {
+		response.PasswordSet = true
+		response.WalletInitialized = true
+	} else {
+		response.PasswordSet = pm.IsPasswordSet()
+		response.WalletInitialized = w.IsInitialized()
+	}
 
 	// Get accounts if initialized
 	if response.WalletInitialized {
-
-		// Get node account
 		nodeAccount, err := w.GetNodeAccount()
 		if err != nil {
 			return nil, err
 		}
+		nodeAddress, err := w.GetAddress()
+		if err != nil {
+			return nil, err
+		}
 		response.AccountAddress = nodeAccount.Address
-
+		response.NodeAddress = nodeAddress
 	}
 
 	// Return response

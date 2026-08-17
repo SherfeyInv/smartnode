@@ -7,23 +7,25 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/minipool"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/settings/protocol"
-	"github.com/rocket-pool/rocketpool-go/settings/trustednode"
-	"github.com/rocket-pool/rocketpool-go/tokens"
-	"github.com/rocket-pool/rocketpool-go/types"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/rocket-pool/smartnode/bindings/minipool"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/settings/protocol"
+	"github.com/rocket-pool/smartnode/bindings/settings/trustednode"
+	"github.com/rocket-pool/smartnode/bindings/tokens"
+	"github.com/rocket-pool/smartnode/bindings/types"
+
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services/beacon"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	rputils "github.com/rocket-pool/smartnode/shared/utils/rp"
 )
 
 // Settings
 const MinipoolDetailsBatchSize = 10
+const MinipoolPubkeyBatchSize = 50
 
 // Validate that a minipool belongs to a node
 func validateMinipoolOwner(mp minipool.Minipool, nodeAddress common.Address) error {
@@ -38,7 +40,7 @@ func validateMinipoolOwner(mp minipool.Minipool, nodeAddress common.Address) err
 }
 
 // Get all node minipool details
-func getNodeMinipoolDetails(rp *rocketpool.RocketPool, bc beacon.Client, nodeAddress common.Address, legacyMinipoolQueueAddress *common.Address) ([]api.MinipoolDetails, error) {
+func GetNodeMinipoolDetails(rp *rocketpool.RocketPool, bc beacon.Client, nodeAddress common.Address, legacyMinipoolQueueAddress *common.Address) ([]api.MinipoolDetails, error) {
 
 	// Data
 	var wg1 errgroup.Group
@@ -85,7 +87,7 @@ func getNodeMinipoolDetails(rp *rocketpool.RocketPool, bc beacon.Client, nodeAdd
 	}
 
 	// Get minipool validator statuses
-	validators, err := rputils.GetMinipoolValidators(rp, bc, addresses, nil, nil)
+	validators, err := GetMinipoolValidators(rp, bc, addresses, nil, nil)
 	if err != nil {
 		return []api.MinipoolDetails{}, err
 	}
@@ -144,13 +146,14 @@ func getNodeMinipoolDetails(rp *rocketpool.RocketPool, bc beacon.Client, nodeAdd
 	// Check the stake status of each minipool
 	for i, mpDetails := range details {
 		if mpDetails.Status.Status == types.Prelaunch {
+			details[i].DissolveTimeout = timeout
 			creationTime := mpDetails.Status.StatusTime
 			dissolveTime := creationTime.Add(timeout)
 			remainingTime := creationTime.Add(scrubPeriod).Sub(latestBlockTime)
 			if remainingTime < 0 {
 				details[i].CanStake = true
-				details[i].TimeUntilDissolve = time.Until(dissolveTime)
 			}
+			details[i].TimeUntilDissolve = time.Until(dissolveTime)
 		}
 	}
 
@@ -261,11 +264,6 @@ func getMinipoolDetails(rp *rocketpool.RocketPool, minipoolAddress common.Addres
 		details.Queue, err = minipool.GetQueueDetails(rp, mp.GetAddress(), nil)
 		return err
 	})
-	wg.Go(func() error {
-		var err error
-		details.ReduceBondTime, err = minipool.GetReduceBondTime(rp, minipoolAddress, nil)
-		return err
-	})
 
 	// Wait for data
 	if err := wg.Wait(); err != nil {
@@ -333,10 +331,10 @@ func getMinipoolValidatorDetails(rp *rocketpool.RocketPool, minipoolDetails api.
 	}
 
 	// Set validator balance
-	details.Balance = eth.GweiToWei(float64(validator.Balance))
+	details.Balance = math.GweiToWei(float64(validator.Balance))
 
 	// Get expected node balance
-	blockBalance := eth.GweiToWei(float64(validator.Balance))
+	blockBalance := math.GweiToWei(float64(validator.Balance))
 	nodeBalance, err := mp.CalculateNodeShare(blockBalance, nil)
 	if err != nil {
 		return api.ValidatorDetails{}, err
@@ -345,5 +343,76 @@ func getMinipoolValidatorDetails(rp *rocketpool.RocketPool, minipoolDetails api.
 
 	// Return
 	return details, nil
+
+}
+
+func GetMinipoolValidators(rp *rocketpool.RocketPool, bc beacon.Client, addresses []common.Address, callOpts *bind.CallOpts, validatorStatusOpts *beacon.ValidatorStatusOptions) (map[common.Address]beacon.ValidatorStatus, error) {
+
+	// Load minipool validator pubkeys in batches
+	pubkeys := make([]types.ValidatorPubkey, len(addresses))
+	for bsi := 0; bsi < len(addresses); bsi += MinipoolPubkeyBatchSize {
+
+		// Get batch start & end index
+		msi := bsi
+		mei := min(bsi+MinipoolPubkeyBatchSize, len(addresses))
+
+		// Load details
+		var wg errgroup.Group
+		for mi := msi; mi < mei; mi++ {
+			mi := mi
+			wg.Go(func() error {
+				address := addresses[mi]
+				pubkey, err := minipool.GetMinipoolPubkey(rp, address, callOpts)
+				if err == nil {
+					pubkeys[mi] = pubkey
+				}
+				return err
+			})
+		}
+		if err := wg.Wait(); err != nil {
+			return map[common.Address]beacon.ValidatorStatus{}, err
+		}
+
+	}
+
+	// Filter out null and duplicate pubkeys
+	filteredPubkeys := []types.ValidatorPubkey{}
+	for _, pubkey := range pubkeys {
+		if bytes.Equal(pubkey.Bytes(), types.ValidatorPubkey{}.Bytes()) {
+			continue
+		}
+		isDuplicate := false
+		for _, pk := range filteredPubkeys {
+			if bytes.Equal(pubkey.Bytes(), pk.Bytes()) {
+				isDuplicate = true
+				break
+			}
+		}
+		if isDuplicate {
+			continue
+		}
+		filteredPubkeys = append(filteredPubkeys, pubkey)
+	}
+
+	// Get validator statuses
+	statuses, err := bc.GetValidatorStatuses(filteredPubkeys, validatorStatusOpts)
+	if err != nil {
+		return map[common.Address]beacon.ValidatorStatus{}, err
+	}
+
+	// Build validator map
+	validators := make(map[common.Address]beacon.ValidatorStatus)
+	for mi := 0; mi < len(addresses); mi++ {
+		address := addresses[mi]
+		pubkey := pubkeys[mi]
+		status, ok := statuses[pubkey]
+		if !ok {
+			status = beacon.ValidatorStatus{}
+		}
+		validators[address] = status
+	}
+
+	// Return
+	return validators, nil
 
 }

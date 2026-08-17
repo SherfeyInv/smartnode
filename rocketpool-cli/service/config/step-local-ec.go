@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
-	"time"
 
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
 )
@@ -27,7 +26,7 @@ func createLocalEcStep(wiz *wizard, currentStep int, totalSteps int) *choiceWiza
 		}
 	}
 
-	helperText := "Please select the Execution client you would like to use.\n\nHighlight each one to see a brief description of it, or go to https://docs.rocketpool.net/guides/node/eth-clients.html#eth1-clients to learn more about them."
+	helperText := "Please select the Execution client you would like to use.\n\nHighlight each one to see a brief description of it, or go to https://docs.rocketpool.net/node-staking/eth-clients#eth1-clients to learn more about them."
 
 	show := func(modal *choiceModalLayout) {
 		wiz.md.setPage(modal.page)
@@ -115,7 +114,6 @@ func selectRandomEC(goodOptions []cfgtypes.ParameterOption, wiz *wizard, current
 	}
 
 	// Select a random client
-	rand.Seed(time.Now().UnixNano())
 	selectedClient := filteredClients[rand.Intn(len(filteredClients))]
 	wiz.md.Config.ExecutionClient.Value = selectedClient
 

@@ -5,14 +5,16 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/dao/protocol"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/types"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/protocol"
+	"github.com/rocket-pool/smartnode/bindings/transactions/gaslimit"
+	"github.com/rocket-pool/smartnode/bindings/types"
 )
 
 type PDAOProposalWithNodeVoteDirection struct {
 	protocol.ProtocolDaoProposalDetails
-	NodeVoteDirection types.VoteDirection `json:"nodeVoteDirection"`
+	NodeVoteDirection     types.VoteDirection `json:"nodeVoteDirection"`
+	DelegateVoteDirection types.VoteDirection `json:"delegateVoteDirection"`
 }
 
 type PDAOProposalsResponse struct {
@@ -28,13 +30,13 @@ type PDAOProposalResponse struct {
 }
 
 type CanCancelPDAOProposalResponse struct {
-	Status          string             `json:"status"`
-	Error           string             `json:"error"`
-	CanCancel       bool               `json:"canCancel"`
-	DoesNotExist    bool               `json:"doesNotExist"`
-	InvalidState    bool               `json:"invalidState"`
-	InvalidProposer bool               `json:"invalidProposer"`
-	GasInfo         rocketpool.GasInfo `json:"gasInfo"`
+	Status          string          `json:"status"`
+	Error           string          `json:"error"`
+	CanCancel       bool            `json:"canCancel"`
+	DoesNotExist    bool            `json:"doesNotExist"`
+	InvalidState    bool            `json:"invalidState"`
+	InvalidProposer bool            `json:"invalidProposer"`
+	GasLimits       gaslimit.Limits `json:"gasLimits"`
 }
 type CancelPDAOProposalResponse struct {
 	Status string      `json:"status"`
@@ -43,15 +45,15 @@ type CancelPDAOProposalResponse struct {
 }
 
 type CanVoteOnPDAOProposalResponse struct {
-	Status            string             `json:"status"`
-	Error             string             `json:"error"`
-	CanVote           bool               `json:"canVote"`
-	DoesNotExist      bool               `json:"doesNotExist"`
-	InvalidState      bool               `json:"invalidState"`
-	InsufficientPower bool               `json:"insufficientPower"`
-	AlreadyVoted      bool               `json:"alreadyVoted"`
-	VotingPower       *big.Int           `json:"votingPower"`
-	GasInfo           rocketpool.GasInfo `json:"gasInfo"`
+	Status            string          `json:"status"`
+	Error             string          `json:"error"`
+	CanVote           bool            `json:"canVote"`
+	DoesNotExist      bool            `json:"doesNotExist"`
+	InvalidState      bool            `json:"invalidState"`
+	InsufficientPower bool            `json:"insufficientPower"`
+	AlreadyVoted      bool            `json:"alreadyVoted"`
+	VotingPower       *big.Int        `json:"votingPower"`
+	GasLimits         gaslimit.Limits `json:"gasLimits"`
 }
 type VoteOnPDAOProposalResponse struct {
 	Status string      `json:"status"`
@@ -60,12 +62,12 @@ type VoteOnPDAOProposalResponse struct {
 }
 
 type CanExecutePDAOProposalResponse struct {
-	Status       string             `json:"status"`
-	Error        string             `json:"error"`
-	CanExecute   bool               `json:"canExecute"`
-	DoesNotExist bool               `json:"doesNotExist"`
-	InvalidState bool               `json:"invalidState"`
-	GasInfo      rocketpool.GasInfo `json:"gasInfo"`
+	Status       string          `json:"status"`
+	Error        string          `json:"error"`
+	CanExecute   bool            `json:"canExecute"`
+	DoesNotExist bool            `json:"doesNotExist"`
+	InvalidState bool            `json:"invalidState"`
+	GasLimits    gaslimit.Limits `json:"gasLimits"`
 }
 type ExecutePDAOProposalResponse struct {
 	Status string      `json:"status"`
@@ -94,6 +96,8 @@ type GetPDAOSettingsResponse struct {
 		MaximumAssignmentsPerDeposit           uint64   `json:"maximumAssignmentsPerDeposit"`
 		MaximumSocialisedAssignmentsPerDeposit uint64   `json:"maximumSocialisedAssignmentsPerDeposit"`
 		DepositFee                             *big.Int `json:"depositFee"`
+		ExpressQueueRate                       uint64   `json:"expressQueueRate"`
+		ExpressQueueTicketsBaseProvision       uint64   `json:"expressQueueTicketsBaseProvision"`
 	} `json:"deposit"`
 
 	Inflation struct {
@@ -108,31 +112,40 @@ type GetPDAOSettingsResponse struct {
 		MaximumCount                uint64        `json:"maximumCount"`
 		UserDistributeWindowStart   time.Duration `json:"userDistributeWindowStart"`
 		UserDistributeWindowLength  time.Duration `json:"userDistributeWindowLength"`
+		MaximumPenaltyCount         uint64        `json:"maximumPenaltyCount"`
 	} `json:"minipool"`
 
 	Network struct {
-		OracleDaoConsensusThreshold *big.Int      `json:"oracleDaoConsensusThreshold"`
-		NodePenaltyThreshold        *big.Int      `json:"nodePenaltyThreshold"`
-		PerPenaltyRate              *big.Int      `json:"perPenaltyRate"`
-		IsSubmitBalancesEnabled     bool          `json:"isSubmitBalancesEnabled"`
-		SubmitBalancesFrequency     time.Duration `json:"submitBalancesFrequency"`
-		IsSubmitPricesEnabled       bool          `json:"isSubmitPricesEnabled"`
-		SubmitPricesFrequency       time.Duration `json:"submitPricesFrequency"`
-		MinimumNodeFee              *big.Int      `json:"minimumNodeFee"`
-		TargetNodeFee               *big.Int      `json:"targetNodeFee"`
-		MaximumNodeFee              *big.Int      `json:"maximumNodeFee"`
-		NodeFeeDemandRange          *big.Int      `json:"nodeFeeDemandRange"`
-		TargetRethCollateralRate    *big.Int      `json:"targetRethCollateralRate"`
-		IsSubmitRewardsEnabled      bool          `json:"isSubmitRewardsEnabled"`
+		OracleDaoConsensusThreshold             *big.Int         `json:"oracleDaoConsensusThreshold"`
+		NodePenaltyThreshold                    *big.Int         `json:"nodePenaltyThreshold"`
+		PerPenaltyRate                          *big.Int         `json:"perPenaltyRate"`
+		IsSubmitBalancesEnabled                 bool             `json:"isSubmitBalancesEnabled"`
+		SubmitBalancesFrequency                 time.Duration    `json:"submitBalancesFrequency"`
+		IsSubmitPricesEnabled                   bool             `json:"isSubmitPricesEnabled"`
+		SubmitPricesFrequency                   time.Duration    `json:"submitPricesFrequency"`
+		MinimumNodeFee                          *big.Int         `json:"minimumNodeFee"`
+		TargetNodeFee                           *big.Int         `json:"targetNodeFee"`
+		MaximumNodeFee                          *big.Int         `json:"maximumNodeFee"`
+		NodeFeeDemandRange                      *big.Int         `json:"nodeFeeDemandRange"`
+		TargetRethCollateralRate                *big.Int         `json:"targetRethCollateralRate"`
+		IsSubmitRewardsEnabled                  bool             `json:"isSubmitRewardsEnabled"`
+		NodeCommissionShare                     *big.Int         `json:"nodeCommissionShare"`
+		NodeCommissionShareSecurityCouncilAdder *big.Int         `json:"nodeCommissionShareSecurityCouncilAdder"`
+		VoterShare                              *big.Int         `json:"voterShare"`
+		ProtocolDAOShare                        *big.Int         `json:"protocolDAOShare"`
+		MaxNodeShareSecurityCouncilAdder        *big.Int         `json:"maxNodeCommissionShareCouncilAdder"`
+		MaxRethBalanceDelta                     *big.Int         `json:"maxRethBalanceDelta"`
+		AllowListedControllers                  []common.Address `json:"allowListedControllers"`
 	} `json:"network"`
 
 	Node struct {
-		IsRegistrationEnabled              bool     `json:"isRegistrationEnabled"`
-		IsSmoothingPoolRegistrationEnabled bool     `json:"isSmoothingPoolRegistrationEnabled"`
-		IsDepositingEnabled                bool     `json:"isDepositingEnabled"`
-		AreVacantMinipoolsEnabled          bool     `json:"areVacantMinipoolsEnabled"`
-		MinimumPerMinipoolStake            *big.Int `json:"minimumPerMinipoolStake"`
-		MaximumPerMinipoolStake            *big.Int `json:"maximumPerMinipoolStake"`
+		IsRegistrationEnabled              bool          `json:"isRegistrationEnabled"`
+		IsSmoothingPoolRegistrationEnabled bool          `json:"isSmoothingPoolRegistrationEnabled"`
+		IsDepositingEnabled                bool          `json:"isDepositingEnabled"`
+		AreVacantMinipoolsEnabled          bool          `json:"areVacantMinipoolsEnabled"`
+		MinimumLegacyRplStake              *big.Int      `json:"minimumLegacyRplStake"`
+		ReducedBond                        float64       `json:"reducedBond"`
+		NodeUnstakingPeriod                time.Duration `json:"nodeUnstakingPeriod"`
 	} `json:"node"`
 
 	Proposals struct {
@@ -159,21 +172,59 @@ type GetPDAOSettingsResponse struct {
 		ProposalExecuteTime time.Duration `json:"proposalExecuteTime"`
 		ProposalActionTime  time.Duration `json:"proposalActionTime"`
 	} `json:"security"`
+
+	Megapool struct {
+		TimeBeforeDissolve               time.Duration `json:"timeBeforeDissolve"`
+		MaximumEthPenalty                *big.Int      `json:"maximumEthPenalty"`
+		NotifyThreshold                  uint64        `json:"notifyThreshold"`
+		LateNotifyFine                   *big.Int      `json:"lateNotifyFine"`
+		DissolvePenalty                  *big.Int      `json:"dissolvePenalty"`
+		UserDistributeDelay              uint64        `json:"userDistributeDelay"`
+		UserDistributeDelayWithShortfall uint64        `json:"userDistributeDelayWithShortfall"`
+		PenaltyThreshold                 *big.Int      `json:"penaltyThreshold"`
+	} `json:"megapool"`
 }
 
 type CanProposePDAOSettingResponse struct {
-	Status                 string             `json:"status"`
-	Error                  string             `json:"error"`
-	CanPropose             bool               `json:"canPropose"`
-	InsufficientRpl        bool               `json:"proposalCooldownActive"`
-	StakedRpl              *big.Int           `json:"stakedRpl"`
-	LockedRpl              *big.Int           `json:"lockedRpl"`
-	ProposalBond           *big.Int           `json:"proposalBond"`
-	BlockNumber            uint32             `json:"blockNumber"`
-	GasInfo                rocketpool.GasInfo `json:"gasInfo"`
-	IsRplLockingDisallowed bool               `json:"isRplLockingDisallowed"`
+	Status                 string          `json:"status"`
+	Error                  string          `json:"error"`
+	CanPropose             bool            `json:"canPropose"`
+	InsufficientRpl        bool            `json:"proposalCooldownActive"`
+	StakedRpl              *big.Int        `json:"stakedRpl"`
+	LockedRpl              *big.Int        `json:"lockedRpl"`
+	ProposalBond           *big.Int        `json:"proposalBond"`
+	BlockNumber            uint32          `json:"blockNumber"`
+	GasLimits              gaslimit.Limits `json:"gasLimits"`
+	IsRplLockingDisallowed bool            `json:"isRplLockingDisallowed"`
 }
 type ProposePDAOSettingResponse struct {
+	Status     string      `json:"status"`
+	Error      string      `json:"error"`
+	ProposalId uint64      `json:"proposalId"`
+	TxHash     common.Hash `json:"txHash"`
+}
+
+type PDAOBatchSetting struct {
+	Contract string `json:"contract"`
+	Setting  string `json:"setting"`
+	Type     string `json:"type,omitempty"`
+	Value    string `json:"value"`
+}
+
+type CanProposePDAOSettingMultiResponse struct {
+	Status                 string          `json:"status"`
+	Error                  string          `json:"error"`
+	CanPropose             bool            `json:"canPropose"`
+	InsufficientRpl        bool            `json:"proposalCooldownActive"`
+	StakedRpl              *big.Int        `json:"stakedRpl"`
+	LockedRpl              *big.Int        `json:"lockedRpl"`
+	ProposalBond           *big.Int        `json:"proposalBond"`
+	BlockNumber            uint32          `json:"blockNumber"`
+	GasLimits              gaslimit.Limits `json:"gasLimits"`
+	IsRplLockingDisallowed bool            `json:"isRplLockingDisallowed"`
+}
+
+type ProposePDAOSettingMultiResponse struct {
 	Status     string      `json:"status"`
 	Error      string      `json:"error"`
 	ProposalId uint64      `json:"proposalId"`
@@ -189,12 +240,12 @@ type PDAOGetRewardsPercentagesResponse struct {
 }
 
 type PDAOCanProposeRewardsPercentagesResponse struct {
-	Status                 string             `json:"status"`
-	Error                  string             `json:"error"`
-	BlockNumber            uint32             `json:"blockNumber"`
-	GasInfo                rocketpool.GasInfo `json:"gasInfo"`
-	CanPropose             bool               `json:"canPropose"`
-	IsRplLockingDisallowed bool               `json:"isRplLockingDisallowed"`
+	Status                 string          `json:"status"`
+	Error                  string          `json:"error"`
+	BlockNumber            uint32          `json:"blockNumber"`
+	GasLimits              gaslimit.Limits `json:"gasLimits"`
+	CanPropose             bool            `json:"canPropose"`
+	IsRplLockingDisallowed bool            `json:"isRplLockingDisallowed"`
 }
 
 type PDAOProposeRewardsPercentagesResponse struct {
@@ -205,12 +256,12 @@ type PDAOProposeRewardsPercentagesResponse struct {
 }
 
 type PDAOCanProposeOneTimeSpendResponse struct {
-	Status                 string             `json:"status"`
-	Error                  string             `json:"error"`
-	BlockNumber            uint32             `json:"blockNumber"`
-	GasInfo                rocketpool.GasInfo `json:"gasInfo"`
-	CanPropose             bool               `json:"canPropose"`
-	IsRplLockingDisallowed bool               `json:"isRplLockingDisallowed"`
+	Status                 string          `json:"status"`
+	Error                  string          `json:"error"`
+	BlockNumber            uint32          `json:"blockNumber"`
+	GasLimits              gaslimit.Limits `json:"gasLimits"`
+	CanPropose             bool            `json:"canPropose"`
+	IsRplLockingDisallowed bool            `json:"isRplLockingDisallowed"`
 }
 type PDAOProposeOneTimeSpendResponse struct {
 	Status     string      `json:"status"`
@@ -220,12 +271,12 @@ type PDAOProposeOneTimeSpendResponse struct {
 }
 
 type PDAOCanProposeRecurringSpendResponse struct {
-	Status                 string             `json:"status"`
-	Error                  string             `json:"error"`
-	BlockNumber            uint32             `json:"blockNumber"`
-	GasInfo                rocketpool.GasInfo `json:"gasInfo"`
-	CanPropose             bool               `json:"canPropose"`
-	IsRplLockingDisallowed bool               `json:"isRplLockingDisallowed"`
+	Status                 string          `json:"status"`
+	Error                  string          `json:"error"`
+	BlockNumber            uint32          `json:"blockNumber"`
+	GasLimits              gaslimit.Limits `json:"gasLimits"`
+	CanPropose             bool            `json:"canPropose"`
+	IsRplLockingDisallowed bool            `json:"isRplLockingDisallowed"`
 }
 
 type PDAOProposeRecurringSpendResponse struct {
@@ -236,12 +287,12 @@ type PDAOProposeRecurringSpendResponse struct {
 }
 
 type PDAOCanProposeRecurringSpendUpdateResponse struct {
-	Status                 string             `json:"status"`
-	Error                  string             `json:"error"`
-	BlockNumber            uint32             `json:"blockNumber"`
-	GasInfo                rocketpool.GasInfo `json:"gasInfo"`
-	CanPropose             bool               `json:"canPropose"`
-	IsRplLockingDisallowed bool               `json:"isRplLockingDisallowed"`
+	Status                 string          `json:"status"`
+	Error                  string          `json:"error"`
+	BlockNumber            uint32          `json:"blockNumber"`
+	GasLimits              gaslimit.Limits `json:"gasLimits"`
+	CanPropose             bool            `json:"canPropose"`
+	IsRplLockingDisallowed bool            `json:"isRplLockingDisallowed"`
 }
 
 type PDAOProposeRecurringSpendUpdateResponse struct {
@@ -252,13 +303,13 @@ type PDAOProposeRecurringSpendUpdateResponse struct {
 }
 
 type PDAOCanProposeInviteToSecurityCouncilResponse struct {
-	Status                 string             `json:"status"`
-	Error                  string             `json:"error"`
-	CanPropose             bool               `json:"canPropose"`
-	MemberAlreadyExists    bool               `json:"memberAlreadyExists"`
-	BlockNumber            uint32             `json:"blockNumber"`
-	GasInfo                rocketpool.GasInfo `json:"gasInfo"`
-	IsRplLockingDisallowed bool               `json:"isRplLockingDisallowed"`
+	Status                 string          `json:"status"`
+	Error                  string          `json:"error"`
+	CanPropose             bool            `json:"canPropose"`
+	MemberAlreadyExists    bool            `json:"memberAlreadyExists"`
+	BlockNumber            uint32          `json:"blockNumber"`
+	GasLimits              gaslimit.Limits `json:"gasLimits"`
+	IsRplLockingDisallowed bool            `json:"isRplLockingDisallowed"`
 }
 type PDAOProposeInviteToSecurityCouncilResponse struct {
 	Status     string      `json:"status"`
@@ -268,12 +319,12 @@ type PDAOProposeInviteToSecurityCouncilResponse struct {
 }
 
 type PDAOCanProposeKickFromSecurityCouncilResponse struct {
-	Status                 string             `json:"status"`
-	Error                  string             `json:"error"`
-	BlockNumber            uint32             `json:"blockNumber"`
-	GasInfo                rocketpool.GasInfo `json:"gasInfo"`
-	CanPropose             bool               `json:"canPropose"`
-	IsRplLockingDisallowed bool               `json:"isRplLockingDisallowed"`
+	Status                 string          `json:"status"`
+	Error                  string          `json:"error"`
+	BlockNumber            uint32          `json:"blockNumber"`
+	GasLimits              gaslimit.Limits `json:"gasLimits"`
+	CanPropose             bool            `json:"canPropose"`
+	IsRplLockingDisallowed bool            `json:"isRplLockingDisallowed"`
 }
 type PDAOProposeKickFromSecurityCouncilResponse struct {
 	Status     string      `json:"status"`
@@ -283,10 +334,10 @@ type PDAOProposeKickFromSecurityCouncilResponse struct {
 }
 
 type PDAOCanProposeKickMultiFromSecurityCouncilResponse struct {
-	Status      string             `json:"status"`
-	Error       string             `json:"error"`
-	BlockNumber uint32             `json:"blockNumber"`
-	GasInfo     rocketpool.GasInfo `json:"gasInfo"`
+	Status      string          `json:"status"`
+	Error       string          `json:"error"`
+	BlockNumber uint32          `json:"blockNumber"`
+	GasLimits   gaslimit.Limits `json:"gasLimits"`
 }
 type PDAOProposeKickMultiFromSecurityCouncilResponse struct {
 	Status     string      `json:"status"`
@@ -296,12 +347,12 @@ type PDAOProposeKickMultiFromSecurityCouncilResponse struct {
 }
 
 type PDAOCanProposeReplaceMemberOfSecurityCouncilResponse struct {
-	Status                 string             `json:"status"`
-	Error                  string             `json:"error"`
-	BlockNumber            uint32             `json:"blockNumber"`
-	GasInfo                rocketpool.GasInfo `json:"gasInfo"`
-	CanPropose             bool               `json:"canPropose"`
-	IsRplLockingDisallowed bool               `json:"isRplLockingDisallowed"`
+	Status                 string          `json:"status"`
+	Error                  string          `json:"error"`
+	BlockNumber            uint32          `json:"blockNumber"`
+	GasLimits              gaslimit.Limits `json:"gasLimits"`
+	CanPropose             bool            `json:"canPropose"`
+	IsRplLockingDisallowed bool            `json:"isRplLockingDisallowed"`
 }
 
 type PDAOProposeReplaceMemberOfSecurityCouncilResponse struct {
@@ -327,13 +378,13 @@ type PDAOGetClaimableBondsResponse struct {
 }
 
 type PDAOCanClaimBondsResponse struct {
-	Status       string             `json:"status"`
-	Error        string             `json:"error"`
-	IsProposer   bool               `json:"isProposer"`
-	CanClaim     bool               `json:"canClaim"`
-	DoesNotExist bool               `json:"doesNotExist"`
-	InvalidState bool               `json:"invalidState"`
-	GasInfo      rocketpool.GasInfo `json:"gasInfo"`
+	Status       string          `json:"status"`
+	Error        string          `json:"error"`
+	IsProposer   bool            `json:"isProposer"`
+	CanClaim     bool            `json:"canClaim"`
+	DoesNotExist bool            `json:"doesNotExist"`
+	InvalidState bool            `json:"invalidState"`
+	GasLimits    gaslimit.Limits `json:"gasLimits"`
 }
 type PDAOClaimBondsResponse struct {
 	Status string      `json:"status"`
@@ -342,14 +393,14 @@ type PDAOClaimBondsResponse struct {
 }
 
 type PDAOCanDefeatProposalResponse struct {
-	Status                 string             `json:"status"`
-	Error                  string             `json:"error"`
-	CanDefeat              bool               `json:"canDefeat"`
-	DoesNotExist           bool               `json:"doesNotExist"`
-	AlreadyDefeated        bool               `json:"alreadyDefeated"`
-	StillInChallengeWindow bool               `json:"stillInChallengeWindow"`
-	InvalidChallengeState  bool               `json:"invalidChallengeState"`
-	GasInfo                rocketpool.GasInfo `json:"gasInfo"`
+	Status                 string          `json:"status"`
+	Error                  string          `json:"error"`
+	CanDefeat              bool            `json:"canDefeat"`
+	DoesNotExist           bool            `json:"doesNotExist"`
+	AlreadyDefeated        bool            `json:"alreadyDefeated"`
+	StillInChallengeWindow bool            `json:"stillInChallengeWindow"`
+	InvalidChallengeState  bool            `json:"invalidChallengeState"`
+	GasLimits              gaslimit.Limits `json:"gasLimits"`
 }
 type PDAODefeatProposalResponse struct {
 	Status string      `json:"status"`
@@ -358,13 +409,13 @@ type PDAODefeatProposalResponse struct {
 }
 
 type PDAOCanFinalizeProposalResponse struct {
-	Status           string             `json:"status"`
-	Error            string             `json:"error"`
-	CanFinalize      bool               `json:"canFinalize"`
-	DoesNotExist     bool               `json:"doesNotExist"`
-	InvalidState     bool               `json:"invalidState"`
-	AlreadyFinalized bool               `json:"alreadyFinalized"`
-	GasInfo          rocketpool.GasInfo `json:"gasInfo"`
+	Status           string          `json:"status"`
+	Error            string          `json:"error"`
+	CanFinalize      bool            `json:"canFinalize"`
+	DoesNotExist     bool            `json:"doesNotExist"`
+	InvalidState     bool            `json:"invalidState"`
+	AlreadyFinalized bool            `json:"alreadyFinalized"`
+	GasLimits        gaslimit.Limits `json:"gasLimits"`
 }
 type PDAOFinalizeProposalResponse struct {
 	Status string      `json:"status"`
@@ -373,9 +424,9 @@ type PDAOFinalizeProposalResponse struct {
 }
 
 type PDAOCanSetVotingDelegateResponse struct {
-	Status  string             `json:"status"`
-	Error   string             `json:"error"`
-	GasInfo rocketpool.GasInfo `json:"gasInfo"`
+	Status    string          `json:"status"`
+	Error     string          `json:"error"`
+	GasLimits gaslimit.Limits `json:"gasLimits"`
 }
 
 type PDAOSetVotingDelegateResponse struct {
@@ -392,10 +443,10 @@ type PDAOCurrentVotingDelegateResponse struct {
 }
 
 type PDAOCanInitializeVotingWithDelegateResponse struct {
-	Status            string             `json:"status"`
-	Error             string             `json:"error"`
-	VotingInitialized bool               `json:"votingInitialized"`
-	GasInfo           rocketpool.GasInfo `json:"gasInfo"`
+	Status            string          `json:"status"`
+	Error             string          `json:"error"`
+	VotingInitialized bool            `json:"votingInitialized"`
+	GasLimits         gaslimit.Limits `json:"gasLimits"`
 }
 
 type PDAOInitializeVotingWithDelegateResponse struct {
@@ -405,16 +456,22 @@ type PDAOInitializeVotingWithDelegateResponse struct {
 }
 
 type PDAOCanInitializeVotingResponse struct {
-	Status            string             `json:"status"`
-	Error             string             `json:"error"`
-	VotingInitialized bool               `json:"votingInitialized"`
-	GasInfo           rocketpool.GasInfo `json:"gasInfo"`
+	Status            string          `json:"status"`
+	Error             string          `json:"error"`
+	VotingInitialized bool            `json:"votingInitialized"`
+	GasLimits         gaslimit.Limits `json:"gasLimits"`
 }
 
 type PDAOInitializeVotingResponse struct {
 	Status string      `json:"status"`
 	Error  string      `json:"error"`
 	TxHash common.Hash `json:"txHash"`
+}
+
+type PDAOIsVotingInitializedResponse struct {
+	Status            string `json:"status"`
+	Error             string `json:"error"`
+	VotingInitialized bool   `json:"votingInitialized"`
 }
 
 type PDAOStatusResponse struct {
@@ -425,7 +482,6 @@ type PDAOStatusResponse struct {
 	OnchainVotingDelegateFormatted string                 `json:"onchainVotingDelegateFormatted"`
 	BlockNumber                    uint32                 `json:"blockNumber"`
 	VerifyEnabled                  bool                   `json:"verifyEnabled"`
-	IsVotingInitialized            bool                   `json:"isVotingInitialized"`
 	SnapshotResponse               SnapshotResponseStruct `json:"snapshotResponse"`
 	IsRPLLockingAllowed            bool                   `json:"isRPLLockingAllowed"`
 	NodeRPLLocked                  *big.Int               `json:"nodeRPLLocked"`
@@ -439,11 +495,10 @@ type PDAOStatusResponse struct {
 }
 
 type PDAOCanSetSignallingAddressResponse struct {
-	Status            string             `json:"status"`
-	Error             string             `json:"error"`
-	GasInfo           rocketpool.GasInfo `json:"gasInfo"`
-	VotingInitialized bool               `json:"votingInitialized"`
-	NodeToSigner      common.Address     `json:"nodeToSigner"`
+	Status       string          `json:"status"`
+	Error        string          `json:"error"`
+	GasLimits    gaslimit.Limits `json:"gasLimits"`
+	NodeToSigner common.Address  `json:"nodeToSigner"`
 }
 
 type PDAOSetSignallingAddressResponse struct {
@@ -453,15 +508,30 @@ type PDAOSetSignallingAddressResponse struct {
 }
 
 type PDAOCanClearSignallingAddressResponse struct {
-	Status            string             `json:"status"`
-	Error             string             `json:"error"`
-	GasInfo           rocketpool.GasInfo `json:"gasInfo"`
-	VotingInitialized bool               `json:"votingInitialized"`
-	NodeToSigner      common.Address     `json:"nodeToSigner"`
+	Status            string          `json:"status"`
+	Error             string          `json:"error"`
+	GasLimits         gaslimit.Limits `json:"gasLimits"`
+	VotingInitialized bool            `json:"votingInitialized"`
+	NodeToSigner      common.Address  `json:"nodeToSigner"`
 }
 
 type PDAOClearSignallingAddressResponse struct {
 	Status string      `json:"status"`
 	Error  string      `json:"error"`
 	TxHash common.Hash `json:"txHash"`
+}
+
+type PDAOACanProposeAllowListedControllersResponse struct {
+	Status                 string          `json:"status"`
+	Error                  string          `json:"error"`
+	BlockNumber            uint32          `json:"blockNumber"`
+	GasLimits              gaslimit.Limits `json:"gasLimits"`
+	CanPropose             bool            `json:"canPropose"`
+	IsRplLockingDisallowed bool            `json:"isRplLockingDisallowed"`
+}
+type PDAOProposeAllowListedControllersResponse struct {
+	Status     string      `json:"status"`
+	Error      string      `json:"error"`
+	ProposalId uint64      `json:"proposalId"`
+	TxHash     common.Hash `json:"txHash"`
 }

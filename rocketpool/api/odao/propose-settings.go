@@ -1,20 +1,21 @@
 package odao
 
 import (
-	"fmt"
 	"math/big"
 
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/settings/trustednode"
-	"github.com/urfave/cli"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/settings/trustednode"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/services/wallet"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canProposeSetting(c *cli.Context, w *wallet.Wallet, rp *rocketpool.RocketPool) (*api.CanProposeTNDAOSettingResponse, error) {
+func canProposeSetting(c *cli.Command, w wallet.Wallet, rp *rocketpool.RocketPool) (*api.CanProposeTNDAOSettingResponse, error) {
 
 	// Response
 	response := api.CanProposeTNDAOSettingResponse{}
@@ -38,7 +39,7 @@ func canProposeSetting(c *cli.Context, w *wallet.Wallet, rp *rocketpool.RocketPo
 
 }
 
-func canProposeSettingMembersQuorum(c *cli.Context, quorum float64) (*api.CanProposeTNDAOSettingResponse, error) {
+func canProposeSettingMembersQuorum(c *cli.Command, quorum float64) (*api.CanProposeTNDAOSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -63,24 +64,21 @@ func canProposeSettingMembersQuorum(c *cli.Context, quorum float64) (*api.CanPro
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := trustednode.EstimateProposeQuorumGas(rp, quorum, opts)
+
+	gasLimits, err := trustednode.EstimateProposeQuorumGas(rp, quorum, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return response, nil
 
 }
 
-func proposeSettingMembersQuorum(c *cli.Context, quorum float64) (*api.ProposeTNDAOSettingMembersQuorumResponse, error) {
+func proposeSettingMembersQuorum(c *cli.Command, quorum float64, opts *bind.TransactOpts) (*api.ProposeTNDAOSettingMembersQuorumResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -90,18 +88,6 @@ func proposeSettingMembersQuorum(c *cli.Context, quorum float64) (*api.ProposeTN
 
 	// Response
 	response := api.ProposeTNDAOSettingMembersQuorumResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Submit proposal
 	proposalId, hash, err := trustednode.ProposeQuorum(rp, quorum, opts)
@@ -116,7 +102,7 @@ func proposeSettingMembersQuorum(c *cli.Context, quorum float64) (*api.ProposeTN
 
 }
 
-func canProposeSettingMembersRplBond(c *cli.Context, bondAmountWei *big.Int) (*api.CanProposeTNDAOSettingResponse, error) {
+func canProposeSettingMembersRplBond(c *cli.Command, bondAmountWei *big.Int) (*api.CanProposeTNDAOSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -141,24 +127,21 @@ func canProposeSettingMembersRplBond(c *cli.Context, bondAmountWei *big.Int) (*a
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := trustednode.EstimateProposeRPLBondGas(rp, bondAmountWei, opts)
+
+	gasLimits, err := trustednode.EstimateProposeRPLBondGas(rp, bondAmountWei, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return response, nil
 
 }
 
-func proposeSettingMembersRplBond(c *cli.Context, bondAmountWei *big.Int) (*api.ProposeTNDAOSettingMembersRplBondResponse, error) {
+func proposeSettingMembersRplBond(c *cli.Command, bondAmountWei *big.Int, opts *bind.TransactOpts) (*api.ProposeTNDAOSettingMembersRplBondResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -168,18 +151,6 @@ func proposeSettingMembersRplBond(c *cli.Context, bondAmountWei *big.Int) (*api.
 
 	// Response
 	response := api.ProposeTNDAOSettingMembersRplBondResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Submit proposal
 	proposalId, hash, err := trustednode.ProposeRPLBond(rp, bondAmountWei, opts)
@@ -194,7 +165,7 @@ func proposeSettingMembersRplBond(c *cli.Context, bondAmountWei *big.Int) (*api.
 
 }
 
-func canProposeSettingMinipoolUnbondedMax(c *cli.Context, unbondedMinipoolMax uint64) (*api.CanProposeTNDAOSettingResponse, error) {
+func canProposeSettingProposalCooldown(c *cli.Command, proposalCooldownTimespan uint64) (*api.CanProposeTNDAOSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -219,102 +190,21 @@ func canProposeSettingMinipoolUnbondedMax(c *cli.Context, unbondedMinipoolMax ui
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := trustednode.EstimateProposeMinipoolUnbondedMaxGas(rp, unbondedMinipoolMax, opts)
+
+	gasLimits, err := trustednode.EstimateProposeProposalCooldownTimeGas(rp, proposalCooldownTimespan, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return response, nil
 
 }
 
-func proposeSettingMinipoolUnbondedMax(c *cli.Context, unbondedMinipoolMax uint64) (*api.ProposeTNDAOSettingMinipoolUnbondedMaxResponse, error) {
+func proposeSettingProposalCooldown(c *cli.Command, proposalCooldownTimespan uint64, opts *bind.TransactOpts) (*api.ProposeTNDAOSettingProposalCooldownResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
-		return nil, err
-	}
-	rp, err := services.GetRocketPool(c)
-	if err != nil {
-		return nil, err
-	}
-
-	// Response
-	response := api.ProposeTNDAOSettingMinipoolUnbondedMaxResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
-
-	// Submit proposal
-	proposalId, hash, err := trustednode.ProposeMinipoolUnbondedMax(rp, unbondedMinipoolMax, opts)
-	if err != nil {
-		return nil, err
-	}
-	response.ProposalId = proposalId
-	response.TxHash = hash
-
-	// Return response
-	return &response, nil
-
-}
-
-func canProposeSettingProposalCooldown(c *cli.Context, proposalCooldownTimespan uint64) (*api.CanProposeTNDAOSettingResponse, error) {
-
-	// Get services
-	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
-		return nil, err
-	}
-	rp, err := services.GetRocketPool(c)
-	if err != nil {
-		return nil, err
-	}
-
-	response, err := canProposeSetting(c, w, rp)
-	if err != nil {
-		return nil, err
-	}
-
-	// Get gas estimate
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-	gasInfo, err := trustednode.EstimateProposeProposalCooldownTimeGas(rp, proposalCooldownTimespan, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	response.GasInfo = gasInfo
-	return response, nil
-
-}
-
-func proposeSettingProposalCooldown(c *cli.Context, proposalCooldownTimespan uint64) (*api.ProposeTNDAOSettingProposalCooldownResponse, error) {
-
-	// Get services
-	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -324,18 +214,6 @@ func proposeSettingProposalCooldown(c *cli.Context, proposalCooldownTimespan uin
 
 	// Response
 	response := api.ProposeTNDAOSettingProposalCooldownResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Submit proposal
 	proposalId, hash, err := trustednode.ProposeProposalCooldownTime(rp, proposalCooldownTimespan, opts)
@@ -350,7 +228,7 @@ func proposeSettingProposalCooldown(c *cli.Context, proposalCooldownTimespan uin
 
 }
 
-func canProposeSettingProposalVoteTimespan(c *cli.Context, proposalVoteTimespan uint64) (*api.CanProposeTNDAOSettingResponse, error) {
+func canProposeSettingProposalVoteTimespan(c *cli.Command, proposalVoteTimespan uint64) (*api.CanProposeTNDAOSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -375,24 +253,21 @@ func canProposeSettingProposalVoteTimespan(c *cli.Context, proposalVoteTimespan 
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := trustednode.EstimateProposeProposalVoteTimeGas(rp, proposalVoteTimespan, opts)
+
+	gasLimits, err := trustednode.EstimateProposeProposalVoteTimeGas(rp, proposalVoteTimespan, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return response, nil
 
 }
 
-func proposeSettingProposalVoteTimespan(c *cli.Context, proposalVoteTimespan uint64) (*api.ProposeTNDAOSettingProposalVoteTimespanResponse, error) {
+func proposeSettingProposalVoteTimespan(c *cli.Command, proposalVoteTimespan uint64, opts *bind.TransactOpts) (*api.ProposeTNDAOSettingProposalVoteTimespanResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -402,18 +277,6 @@ func proposeSettingProposalVoteTimespan(c *cli.Context, proposalVoteTimespan uin
 
 	// Response
 	response := api.ProposeTNDAOSettingProposalVoteTimespanResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Submit proposal
 	proposalId, hash, err := trustednode.ProposeProposalVoteTime(rp, proposalVoteTimespan, opts)
@@ -428,7 +291,7 @@ func proposeSettingProposalVoteTimespan(c *cli.Context, proposalVoteTimespan uin
 
 }
 
-func canProposeSettingProposalVoteDelayTimespan(c *cli.Context, proposalDelayTimespan uint64) (*api.CanProposeTNDAOSettingResponse, error) {
+func canProposeSettingProposalVoteDelayTimespan(c *cli.Command, proposalDelayTimespan uint64) (*api.CanProposeTNDAOSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -453,24 +316,21 @@ func canProposeSettingProposalVoteDelayTimespan(c *cli.Context, proposalDelayTim
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := trustednode.EstimateProposeProposalVoteDelayTimeGas(rp, proposalDelayTimespan, opts)
+
+	gasLimits, err := trustednode.EstimateProposeProposalVoteDelayTimeGas(rp, proposalDelayTimespan, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return response, nil
 
 }
 
-func proposeSettingProposalVoteDelayTimespan(c *cli.Context, proposalDelayTimespan uint64) (*api.ProposeTNDAOSettingProposalVoteDelayTimespanResponse, error) {
+func proposeSettingProposalVoteDelayTimespan(c *cli.Command, proposalDelayTimespan uint64, opts *bind.TransactOpts) (*api.ProposeTNDAOSettingProposalVoteDelayTimespanResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -480,18 +340,6 @@ func proposeSettingProposalVoteDelayTimespan(c *cli.Context, proposalDelayTimesp
 
 	// Response
 	response := api.ProposeTNDAOSettingProposalVoteDelayTimespanResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Submit proposal
 	proposalId, hash, err := trustednode.ProposeProposalVoteDelayTime(rp, proposalDelayTimespan, opts)
@@ -506,7 +354,7 @@ func proposeSettingProposalVoteDelayTimespan(c *cli.Context, proposalDelayTimesp
 
 }
 
-func canProposeSettingProposalExecuteTimespan(c *cli.Context, proposalExecuteTimespan uint64) (*api.CanProposeTNDAOSettingResponse, error) {
+func canProposeSettingProposalExecuteTimespan(c *cli.Command, proposalExecuteTimespan uint64) (*api.CanProposeTNDAOSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -531,24 +379,21 @@ func canProposeSettingProposalExecuteTimespan(c *cli.Context, proposalExecuteTim
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := trustednode.EstimateProposeProposalExecuteTimeGas(rp, proposalExecuteTimespan, opts)
+
+	gasLimits, err := trustednode.EstimateProposeProposalExecuteTimeGas(rp, proposalExecuteTimespan, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return response, nil
 
 }
 
-func proposeSettingProposalExecuteTimespan(c *cli.Context, proposalExecuteTimespan uint64) (*api.ProposeTNDAOSettingProposalExecuteTimespanResponse, error) {
+func proposeSettingProposalExecuteTimespan(c *cli.Command, proposalExecuteTimespan uint64, opts *bind.TransactOpts) (*api.ProposeTNDAOSettingProposalExecuteTimespanResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -558,18 +403,6 @@ func proposeSettingProposalExecuteTimespan(c *cli.Context, proposalExecuteTimesp
 
 	// Response
 	response := api.ProposeTNDAOSettingProposalExecuteTimespanResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Submit proposal
 	proposalId, hash, err := trustednode.ProposeProposalExecuteTime(rp, proposalExecuteTimespan, opts)
@@ -584,7 +417,7 @@ func proposeSettingProposalExecuteTimespan(c *cli.Context, proposalExecuteTimesp
 
 }
 
-func canProposeSettingProposalActionTimespan(c *cli.Context, proposalActionTimespan uint64) (*api.CanProposeTNDAOSettingResponse, error) {
+func canProposeSettingProposalActionTimespan(c *cli.Command, proposalActionTimespan uint64) (*api.CanProposeTNDAOSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -609,24 +442,21 @@ func canProposeSettingProposalActionTimespan(c *cli.Context, proposalActionTimes
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := trustednode.EstimateProposeProposalActionTimeGas(rp, proposalActionTimespan, opts)
+
+	gasLimits, err := trustednode.EstimateProposeProposalActionTimeGas(rp, proposalActionTimespan, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return response, nil
 
 }
 
-func proposeSettingProposalActionTimespan(c *cli.Context, proposalActionTimespan uint64) (*api.ProposeTNDAOSettingProposalActionTimespanResponse, error) {
+func proposeSettingProposalActionTimespan(c *cli.Command, proposalActionTimespan uint64, opts *bind.TransactOpts) (*api.ProposeTNDAOSettingProposalActionTimespanResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -636,18 +466,6 @@ func proposeSettingProposalActionTimespan(c *cli.Context, proposalActionTimespan
 
 	// Response
 	response := api.ProposeTNDAOSettingProposalActionTimespanResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Submit proposal
 	proposalId, hash, err := trustednode.ProposeProposalActionTime(rp, proposalActionTimespan, opts)
@@ -662,7 +480,7 @@ func proposeSettingProposalActionTimespan(c *cli.Context, proposalActionTimespan
 
 }
 
-func canProposeSettingScrubPeriod(c *cli.Context, scrubPeriod uint64) (*api.CanProposeTNDAOSettingResponse, error) {
+func canProposeSettingScrubPeriod(c *cli.Command, scrubPeriod uint64) (*api.CanProposeTNDAOSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -687,24 +505,21 @@ func canProposeSettingScrubPeriod(c *cli.Context, scrubPeriod uint64) (*api.CanP
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := trustednode.EstimateProposeScrubPeriodGas(rp, scrubPeriod, opts)
+
+	gasLimits, err := trustednode.EstimateProposeScrubPeriodGas(rp, scrubPeriod, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return response, nil
 
 }
 
-func proposeSettingScrubPeriod(c *cli.Context, scrubPeriod uint64) (*api.ProposeTNDAOSettingScrubPeriodResponse, error) {
+func proposeSettingScrubPeriod(c *cli.Command, scrubPeriod uint64, opts *bind.TransactOpts) (*api.ProposeTNDAOSettingScrubPeriodResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -714,18 +529,6 @@ func proposeSettingScrubPeriod(c *cli.Context, scrubPeriod uint64) (*api.Propose
 
 	// Response
 	response := api.ProposeTNDAOSettingScrubPeriodResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Submit proposal
 	proposalId, hash, err := trustednode.ProposeScrubPeriod(rp, scrubPeriod, opts)
@@ -740,7 +543,7 @@ func proposeSettingScrubPeriod(c *cli.Context, scrubPeriod uint64) (*api.Propose
 
 }
 
-func canProposeSettingPromotionScrubPeriod(c *cli.Context, promotionScrubPeriod uint64) (*api.CanProposeTNDAOSettingResponse, error) {
+func canProposeSettingPromotionScrubPeriod(c *cli.Command, promotionScrubPeriod uint64) (*api.CanProposeTNDAOSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -765,24 +568,21 @@ func canProposeSettingPromotionScrubPeriod(c *cli.Context, promotionScrubPeriod 
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := trustednode.EstimateProposePromotionScrubPeriodGas(rp, promotionScrubPeriod, opts)
+
+	gasLimits, err := trustednode.EstimateProposePromotionScrubPeriodGas(rp, promotionScrubPeriod, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return response, nil
 
 }
 
-func proposeSettingPromotionScrubPeriod(c *cli.Context, promotionScrubPeriod uint64) (*api.ProposeTNDAOSettingPromotionScrubPeriodResponse, error) {
+func proposeSettingPromotionScrubPeriod(c *cli.Command, promotionScrubPeriod uint64, opts *bind.TransactOpts) (*api.ProposeTNDAOSettingPromotionScrubPeriodResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -792,18 +592,6 @@ func proposeSettingPromotionScrubPeriod(c *cli.Context, promotionScrubPeriod uin
 
 	// Response
 	response := api.ProposeTNDAOSettingPromotionScrubPeriodResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Submit proposal
 	proposalId, hash, err := trustednode.ProposePromotionScrubPeriod(rp, promotionScrubPeriod, opts)
@@ -818,7 +606,7 @@ func proposeSettingPromotionScrubPeriod(c *cli.Context, promotionScrubPeriod uin
 
 }
 
-func canProposeSettingScrubPenaltyEnabled(c *cli.Context, enabled bool) (*api.CanProposeTNDAOSettingResponse, error) {
+func canProposeSettingScrubPenaltyEnabled(c *cli.Command, enabled bool) (*api.CanProposeTNDAOSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -843,24 +631,21 @@ func canProposeSettingScrubPenaltyEnabled(c *cli.Context, enabled bool) (*api.Ca
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := trustednode.EstimateProposeScrubPenaltyEnabledGas(rp, enabled, opts)
+
+	gasLimits, err := trustednode.EstimateProposeScrubPenaltyEnabledGas(rp, enabled, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return response, nil
 
 }
 
-func proposeSettingScrubPenaltyEnabled(c *cli.Context, enabled bool) (*api.ProposeTNDAOSettingScrubPeriodResponse, error) {
+func proposeSettingScrubPenaltyEnabled(c *cli.Command, enabled bool, opts *bind.TransactOpts) (*api.ProposeTNDAOSettingScrubPeriodResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -870,18 +655,6 @@ func proposeSettingScrubPenaltyEnabled(c *cli.Context, enabled bool) (*api.Propo
 
 	// Response
 	response := api.ProposeTNDAOSettingScrubPeriodResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Submit proposal
 	proposalId, hash, err := trustednode.ProposeScrubPenaltyEnabled(rp, enabled, opts)
@@ -896,7 +669,7 @@ func proposeSettingScrubPenaltyEnabled(c *cli.Context, enabled bool) (*api.Propo
 
 }
 
-func canProposeSettingBondReductionWindowStart(c *cli.Context, bondReductionWindowStart uint64) (*api.CanProposeTNDAOSettingResponse, error) {
+func canProposeSettingBondReductionWindowStart(c *cli.Command, bondReductionWindowStart uint64) (*api.CanProposeTNDAOSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -921,24 +694,21 @@ func canProposeSettingBondReductionWindowStart(c *cli.Context, bondReductionWind
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := trustednode.EstimateProposeBondReductionWindowStartGas(rp, bondReductionWindowStart, opts)
+
+	gasLimits, err := trustednode.EstimateProposeBondReductionWindowStartGas(rp, bondReductionWindowStart, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return response, nil
 
 }
 
-func proposeSettingBondReductionWindowStart(c *cli.Context, bondReductionWindowStart uint64) (*api.ProposeTNDAOSettingScrubPeriodResponse, error) {
+func proposeSettingBondReductionWindowStart(c *cli.Command, bondReductionWindowStart uint64, opts *bind.TransactOpts) (*api.ProposeTNDAOSettingScrubPeriodResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -948,18 +718,6 @@ func proposeSettingBondReductionWindowStart(c *cli.Context, bondReductionWindowS
 
 	// Response
 	response := api.ProposeTNDAOSettingScrubPeriodResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Submit proposal
 	proposalId, hash, err := trustednode.ProposeBondReductionWindowStart(rp, bondReductionWindowStart, opts)
@@ -974,7 +732,7 @@ func proposeSettingBondReductionWindowStart(c *cli.Context, bondReductionWindowS
 
 }
 
-func canProposeSettingBondReductionWindowLength(c *cli.Context, bondReductionWindowLength uint64) (*api.CanProposeTNDAOSettingResponse, error) {
+func canProposeSettingBondReductionWindowLength(c *cli.Command, bondReductionWindowLength uint64) (*api.CanProposeTNDAOSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -999,24 +757,21 @@ func canProposeSettingBondReductionWindowLength(c *cli.Context, bondReductionWin
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := trustednode.EstimateProposeBondReductionWindowLengthGas(rp, bondReductionWindowLength, opts)
+
+	gasLimits, err := trustednode.EstimateProposeBondReductionWindowLengthGas(rp, bondReductionWindowLength, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return response, nil
 
 }
 
-func proposeSettingBondReductionWindowLength(c *cli.Context, bondReductionWindowLength uint64) (*api.ProposeTNDAOSettingScrubPeriodResponse, error) {
+func proposeSettingBondReductionWindowLength(c *cli.Command, bondReductionWindowLength uint64, opts *bind.TransactOpts) (*api.ProposeTNDAOSettingScrubPeriodResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -1026,18 +781,6 @@ func proposeSettingBondReductionWindowLength(c *cli.Context, bondReductionWindow
 
 	// Response
 	response := api.ProposeTNDAOSettingScrubPeriodResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Submit proposal
 	proposalId, hash, err := trustednode.ProposeBondReductionWindowLength(rp, bondReductionWindowLength, opts)

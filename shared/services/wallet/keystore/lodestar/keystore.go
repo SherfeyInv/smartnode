@@ -2,19 +2,19 @@ package lodestar
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
 	"github.com/goccy/go-json"
 	"github.com/google/uuid"
-	"github.com/rocket-pool/rocketpool-go/types"
 	eth2types "github.com/wealdtech/go-eth2-types/v2"
 	eth2ks "github.com/wealdtech/go-eth2-wallet-encryptor-keystorev4"
 
+	"github.com/rocket-pool/smartnode/bindings/types"
+
+	hexutil "github.com/rocket-pool/smartnode/shared/hex"
 	"github.com/rocket-pool/smartnode/shared/services/passwords"
 	keystore "github.com/rocket-pool/smartnode/shared/services/wallet/keystore"
-	hexutil "github.com/rocket-pool/smartnode/shared/utils/hex"
 )
 
 // Config
@@ -99,7 +99,7 @@ func (ks *Keystore) StoreValidatorKey(key *eth2types.BLSPrivateKey, derivationPa
 	}
 
 	// Write secret to disk
-	if err := ioutil.WriteFile(secretFilePath, []byte(password), FileMode); err != nil {
+	if err := os.WriteFile(secretFilePath, []byte(password), FileMode); err != nil {
 		return fmt.Errorf("Could not write validator secret to disk: %w", err)
 	}
 
@@ -112,7 +112,7 @@ func (ks *Keystore) StoreValidatorKey(key *eth2types.BLSPrivateKey, derivationPa
 	}
 
 	// Write key store to disk
-	if err := ioutil.WriteFile(keyFilePath, keyStoreBytes, FileMode); err != nil {
+	if err := os.WriteFile(keyFilePath, keyStoreBytes, FileMode); err != nil {
 		return fmt.Errorf("Could not write validator key to disk: %w", err)
 	}
 

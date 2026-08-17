@@ -3,11 +3,13 @@ package wallet
 import (
 	"fmt"
 
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/urfave/cli/v3"
+	ens "github.com/wealdtech/go-ens/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/transactions/gaslimit"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/urfave/cli"
-	ens "github.com/wealdtech/go-ens/v3"
 )
 
 const (
@@ -16,7 +18,7 @@ const (
 )
 
 // Set a name to the node wallet's ENS reverse record.
-func setEnsName(c *cli.Context, name string, onlyEstimateGas bool) (*api.SetEnsNameResponse, error) {
+func setEnsName(c *cli.Command, name string, onlyEstimateGas bool, opts *bind.TransactOpts) (*api.SetEnsNameResponse, error) {
 	rp, err := services.GetRocketPool(c)
 	if err != nil {
 		return nil, err
@@ -54,12 +56,6 @@ func setEnsName(c *cli.Context, name string, onlyEstimateGas bool) (*api.SetEnsN
 		return nil, fmt.Errorf("error: the ENS record already points to the name '%s'", name)
 	}
 
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
 	// If onlyEstimateGas is set, then don't send the tx, only simulates and returns the gas estimate
 	opts.NoSend = onlyEstimateGas
 
@@ -75,17 +71,17 @@ func setEnsName(c *cli.Context, name string, onlyEstimateGas bool) (*api.SetEnsN
 		Address: account.Address,
 		EnsName: name,
 		TxHash:  tx.Hash(),
-		GasInfo: rocketpool.GasInfo{
-			EstGasLimit:  tx.Gas(),
-			SafeGasLimit: uint64(float64(tx.Gas()) * GasLimitMultiplier),
+		GasLimits: gaslimit.Limits{
+			Estimated: tx.Gas(),
+			Safe:      uint64(float64(tx.Gas()) * GasLimitMultiplier),
 		},
 	}
 
-	if response.GasInfo.EstGasLimit > MaxGasLimit {
-		return nil, fmt.Errorf("estimated gas of %d is greater than the max gas limit of %d", response.GasInfo.EstGasLimit, MaxGasLimit)
+	if response.GasLimits.Estimated > MaxGasLimit {
+		return nil, fmt.Errorf("estimated gas of %d is greater than the max gas limit of %d", response.GasLimits.Estimated, MaxGasLimit)
 	}
-	if response.GasInfo.SafeGasLimit > MaxGasLimit {
-		response.GasInfo.SafeGasLimit = MaxGasLimit
+	if response.GasLimits.Safe > MaxGasLimit {
+		response.GasLimits.Safe = MaxGasLimit
 	}
 
 	return &response, nil

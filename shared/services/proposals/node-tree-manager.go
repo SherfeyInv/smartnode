@@ -9,10 +9,11 @@ import (
 
 	"github.com/blang/semver/v4"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/types"
+
+	"github.com/rocket-pool/smartnode/bindings/types"
+	log "github.com/rocket-pool/smartnode/shared/logger"
 	"github.com/rocket-pool/smartnode/shared/services/config"
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
-	"github.com/rocket-pool/smartnode/shared/utils/log"
 )
 
 const (
@@ -94,7 +95,12 @@ func NewNodeTreeManager(log *log.ColorLogger, cfg *config.RocketPoolConfig) (*No
 
 // Create a node voting tree from a voting info snapshot and the node's index
 func (m *NodeTreeManager) CreateNodeVotingTree(snapshot *VotingInfoSnapshot, rpNodeIndex uint64, networkTreeNodeIndex uint64, depthPerRound uint64) *NodeVotingTree {
-	address := &snapshot.Info[rpNodeIndex].NodeAddress
+	var address *common.Address
+	if rpNodeIndex >= uint64(len(snapshot.Info)) {
+		address = &common.MaxAddress
+	} else {
+		address = &snapshot.Info[rpNodeIndex].NodeAddress
+	}
 	leaves := make([]*types.VotingTreeNode, len(snapshot.Info))
 	zeroHash := getHashForBalance(common.Big0)
 	for i, info := range snapshot.Info {
@@ -192,7 +198,7 @@ func (m *NodeTreeManager) IsDataValid(data *NodeVotingTree, filename string, con
 		return false, nil
 	}
 	if snapshotVersion.LT(*m.latestCompatibleVersion) {
-		m.logMessage("%s File [%s] was made with Smartnode v%s which is not compatible (lowest compatible = v%s) so it cannot be used.", m.logPrefix, filename, data.SmartnodeVersion, latestCompatibleVersionString)
+		m.logMessage("%s File [%s] was made withSmart Node v%s which is not compatible (lowest compatible = v%s) so it cannot be used.", m.logPrefix, filename, data.SmartnodeVersion, latestCompatibleVersionString)
 		return false, nil
 	}
 

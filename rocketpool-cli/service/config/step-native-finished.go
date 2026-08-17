@@ -1,16 +1,16 @@
 package config
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/rivo/tview"
+
 	"github.com/rocket-pool/smartnode/shared/types/config"
 )
 
 func createNativeFinishedStep(wiz *wizard, currentStep int, totalSteps int) *choiceWizardStep {
 
-	helperText := "All done! You're ready to run.\n\nIf you'd like, you can review and change all of the Smartnode and Native settings next or just save and exit."
+	helperText := "All done! You're ready to run.\n\nIf you'd like, you can review and change all of the Smart Node and Native settings next or just save and exit."
 
 	show := func(modal *choiceModalLayout) {
 		wiz.md.setPage(modal.page)
@@ -33,8 +33,8 @@ func createNativeFinishedStep(wiz *wizard, currentStep int, totalSteps int) *cho
 	}
 
 	back := func() {
-		if wiz.md.Config.Smartnode.Network.Value == config.Network_Holesky || wiz.md.Config.Smartnode.Network.Value == config.Network_Devnet {
-			// Skip MEV for Holesky
+		if wiz.md.Config.Smartnode.Network.Value == config.Network_Testnet || wiz.md.Config.Smartnode.Network.Value == config.Network_Devnet {
+			// Skip MEV for Testnet/Devnet
 			wiz.nativeMetricsModal.show()
 		} else {
 			wiz.nativeMevModal.show()
@@ -63,13 +63,13 @@ func createNativeFinishedStep(wiz *wizard, currentStep int, totalSteps int) *cho
 }
 
 // Processes a configuration after saving and exiting without looking at the review screen
-func processConfigAfterQuitNative(md *mainDisplay) {
+func processConfigAfterQuitNative(md *MainDisplay) {
 	errors := md.Config.Validate()
 	if len(errors) > 0 {
 		builder := strings.Builder{}
 		builder.WriteString("[orange]WARNING: Your configuration encountered errors. You must correct the following in order to save it:\n\n")
 		for _, err := range errors {
-			builder.WriteString(fmt.Sprintf("%s\n\n", err))
+			builder.WriteString(err + "\n\n")
 		}
 
 		modal := tview.NewModal().

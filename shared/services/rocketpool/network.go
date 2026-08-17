@@ -3,14 +3,16 @@ package rocketpool
 import (
 	"fmt"
 	"math/big"
+	"net/url"
 
 	"github.com/goccy/go-json"
+
 	"github.com/rocket-pool/smartnode/shared/types/api"
 )
 
 // Get network node fee
 func (c *Client) NodeFee() (api.NodeFeeResponse, error) {
-	responseBytes, err := c.callAPI("network node-fee")
+	responseBytes, err := c.callHTTPAPI("GET", "/api/network/node-fee", nil)
 	if err != nil {
 		return api.NodeFeeResponse{}, fmt.Errorf("Could not get network node fee: %w", err)
 	}
@@ -26,7 +28,7 @@ func (c *Client) NodeFee() (api.NodeFeeResponse, error) {
 
 // Get network RPL price
 func (c *Client) RplPrice() (api.RplPriceResponse, error) {
-	responseBytes, err := c.callAPI("network rpl-price")
+	responseBytes, err := c.callHTTPAPI("GET", "/api/network/rpl-price", nil)
 	if err != nil {
 		return api.RplPriceResponse{}, fmt.Errorf("Could not get network RPL price: %w", err)
 	}
@@ -40,18 +42,12 @@ func (c *Client) RplPrice() (api.RplPriceResponse, error) {
 	if response.RplPrice == nil {
 		response.RplPrice = big.NewInt(0)
 	}
-	if response.MinPer8EthMinipoolRplStake == nil {
-		response.MinPer8EthMinipoolRplStake = big.NewInt(0)
-	}
-	if response.MinPer16EthMinipoolRplStake == nil {
-		response.MinPer16EthMinipoolRplStake = big.NewInt(0)
-	}
 	return response, nil
 }
 
 // Get network stats
 func (c *Client) NetworkStats() (api.NetworkStatsResponse, error) {
-	responseBytes, err := c.callAPI("network stats")
+	responseBytes, err := c.callHTTPAPI("GET", "/api/network/stats", nil)
 	if err != nil {
 		return api.NetworkStatsResponse{}, fmt.Errorf("Could not get network stats: %w", err)
 	}
@@ -67,7 +63,7 @@ func (c *Client) NetworkStats() (api.NetworkStatsResponse, error) {
 
 // Get the timezone map
 func (c *Client) TimezoneMap() (api.NetworkTimezonesResponse, error) {
-	responseBytes, err := c.callAPI("network timezone-map")
+	responseBytes, err := c.callHTTPAPI("GET", "/api/network/timezone-map", nil)
 	if err != nil {
 		return api.NetworkTimezonesResponse{}, fmt.Errorf("Could not get network timezone map: %w", err)
 	}
@@ -83,7 +79,7 @@ func (c *Client) TimezoneMap() (api.NetworkTimezonesResponse, error) {
 
 // Check if the rewards tree for the provided interval can be generated
 func (c *Client) CanGenerateRewardsTree(index uint64) (api.CanNetworkGenerateRewardsTreeResponse, error) {
-	responseBytes, err := c.callAPI(fmt.Sprintf("network can-generate-rewards-tree %d", index))
+	responseBytes, err := c.callHTTPAPI("GET", "/api/network/can-generate-rewards-tree", url.Values{"index": {fmt.Sprintf("%d", index)}})
 	if err != nil {
 		return api.CanNetworkGenerateRewardsTreeResponse{}, fmt.Errorf("Could not check rewards tree generation status: %w", err)
 	}
@@ -99,7 +95,7 @@ func (c *Client) CanGenerateRewardsTree(index uint64) (api.CanNetworkGenerateRew
 
 // Set a request marker for the watchtower to generate the rewards tree for the given interval
 func (c *Client) GenerateRewardsTree(index uint64) (api.NetworkGenerateRewardsTreeResponse, error) {
-	responseBytes, err := c.callAPI(fmt.Sprintf("network generate-rewards-tree %d", index))
+	responseBytes, err := c.callHTTPAPI("POST", "/api/network/generate-rewards-tree", url.Values{"index": {fmt.Sprintf("%d", index)}})
 	if err != nil {
 		return api.NetworkGenerateRewardsTreeResponse{}, fmt.Errorf("Could not initialize rewards tree generation: %w", err)
 	}
@@ -115,7 +111,7 @@ func (c *Client) GenerateRewardsTree(index uint64) (api.NetworkGenerateRewardsTr
 
 // GetActiveDAOProposals fetches information about active DAO proposals
 func (c *Client) GetActiveDAOProposals() (api.NetworkDAOProposalsResponse, error) {
-	responseBytes, err := c.callAPI("network dao-proposals")
+	responseBytes, err := c.callHTTPAPI("GET", "/api/network/dao-proposals", nil)
 	if err != nil {
 		return api.NetworkDAOProposalsResponse{}, fmt.Errorf("could not request active DAO proposals: %w", err)
 	}
@@ -131,7 +127,7 @@ func (c *Client) GetActiveDAOProposals() (api.NetworkDAOProposalsResponse, error
 
 // Download a rewards info file from IPFS for the given interval
 func (c *Client) DownloadRewardsFile(interval uint64) (api.DownloadRewardsFileResponse, error) {
-	responseBytes, err := c.callAPI(fmt.Sprintf("network download-rewards-file %d", interval))
+	responseBytes, err := c.callHTTPAPI("POST", "/api/network/download-rewards-file", url.Values{"interval": {fmt.Sprintf("%d", interval)}})
 	if err != nil {
 		return api.DownloadRewardsFileResponse{}, fmt.Errorf("could not download rewards file: %w", err)
 	}
@@ -147,7 +143,7 @@ func (c *Client) DownloadRewardsFile(interval uint64) (api.DownloadRewardsFileRe
 
 // Get the address of the latest minipool delegate contract
 func (c *Client) GetLatestDelegate() (api.GetLatestDelegateResponse, error) {
-	responseBytes, err := c.callAPI("network latest-delegate")
+	responseBytes, err := c.callHTTPAPI("GET", "/api/network/latest-delegate", nil)
 	if err != nil {
 		return api.GetLatestDelegateResponse{}, fmt.Errorf("could not get latest delegate: %w", err)
 	}

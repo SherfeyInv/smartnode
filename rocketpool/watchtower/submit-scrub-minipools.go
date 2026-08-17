@@ -11,40 +11,42 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/prysmaticlabs/prysm/v5/beacon-chain/core/signing"
 	prdeposit "github.com/prysmaticlabs/prysm/v5/contracts/deposit"
-	"github.com/rocket-pool/rocketpool-go/minipool"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/types"
-	rputils "github.com/rocket-pool/rocketpool-go/utils"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
-	rpstate "github.com/rocket-pool/rocketpool-go/utils/state"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/minipool"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/transactions"
+	"github.com/rocket-pool/smartnode/bindings/types"
+	rputils "github.com/rocket-pool/smartnode/bindings/utils"
+	rpstate "github.com/rocket-pool/smartnode/bindings/utils/state"
 
 	ethpb "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
+	eth2types "github.com/wealdtech/go-eth2-types/v2"
+
 	"github.com/rocket-pool/smartnode/rocketpool/watchtower/collectors"
 	"github.com/rocket-pool/smartnode/rocketpool/watchtower/utils"
+	log "github.com/rocket-pool/smartnode/shared/logger"
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/services/beacon"
 	"github.com/rocket-pool/smartnode/shared/services/config"
 	"github.com/rocket-pool/smartnode/shared/services/state"
 	"github.com/rocket-pool/smartnode/shared/services/wallet"
-	"github.com/rocket-pool/smartnode/shared/utils/api"
-	"github.com/rocket-pool/smartnode/shared/utils/log"
-	eth2types "github.com/wealdtech/go-eth2-types/v2"
 )
 
 // Settings
 const MinipoolBatchSize = 20
-const BlockStartOffset = 100000
+const BlockStartOffset = 150000
 const ScrubSafetyDivider = 2
 const MinScrubSafetyTime = time.Duration(0) * time.Hour
 
 // Submit scrub minipools task
 type submitScrubMinipools struct {
-	c         *cli.Context
+	c         *cli.Command
 	log       log.ColorLogger
 	errLog    log.ColorLogger
 	cfg       *config.RocketPoolConfig
-	w         *wallet.Wallet
+	w         wallet.Wallet
 	rp        *rocketpool.RocketPool
 	ec        rocketpool.ExecutionClient
 	bc        beacon.Client
@@ -83,7 +85,7 @@ type minipoolDetails struct {
 }
 
 // Create submit scrub minipools task
-func newSubmitScrubMinipools(c *cli.Context, logger log.ColorLogger, errorLogger log.ColorLogger, coll *collectors.ScrubCollector) (*submitScrubMinipools, error) {
+func newSubmitScrubMinipools(c *cli.Command, logger log.ColorLogger, errorLogger log.ColorLogger, coll *collectors.ScrubCollector) (*submitScrubMinipools, error) {
 
 	// Get services
 	cfg, err := services.GetConfig(c)
@@ -283,14 +285,14 @@ func (t *submitScrubMinipools) initializeMinipoolDetails(minipools []rpstate.Nat
 }
 
 // Step 1: Verify the Beacon Chain credentials for a minipool if they're present
-func (t *submitScrubMinipools) verifyBeaconWithdrawalCredentials(state *state.NetworkState) error {
+func (t *submitScrubMinipools) verifyBeaconWithdrawalCredentials(state *state.NetworkState) {
 	minipoolsToScrub := []minipool.Minipool{}
 
 	// Get the withdrawal credentials on Beacon for each validator if they exist
 	for minipool, details := range t.it.minipools {
 		pubkey := details.pubkey
 
-		status := state.ValidatorDetails[pubkey]
+		status := state.MinipoolValidatorDetails[pubkey]
 		if status.Exists {
 			// This minipool's deposit has been seen on the Beacon Chain
 			expectedCreds := details.expectedWithdrawalCredentials
@@ -322,7 +324,6 @@ func (t *submitScrubMinipools) verifyBeaconWithdrawalCredentials(state *state.Ne
 		}
 	}
 
-	return nil
 }
 
 // Get various elements needed to do eth1 prestake and deposit contract searches
@@ -370,7 +371,7 @@ func (t *submitScrubMinipools) verifyPrestakeEvents() {
 
 	minipoolsToScrub := []minipool.Minipool{}
 
-	weiPerGwei := big.NewInt(int64(eth.WeiPerGwei))
+	weiPerGwei := big.NewInt(int64(math.WeiPerGwei))
 	for minipool := range t.it.minipools {
 		// Get the MinipoolPrestaked event
 		prestakeData, err := minipool.GetPrestakeEvent(t.it.eventLogInterval, nil)
@@ -571,21 +572,21 @@ func (t *submitScrubMinipools) submitVoteScrubMinipool(mp minipool.Minipool) err
 	}
 
 	// Get the gas limit
-	gasInfo, err := mp.EstimateVoteScrubGas(opts)
+	gasLimits, err := mp.EstimateVoteScrubGas(opts)
 	if err != nil {
 		return fmt.Errorf("Could not estimate the gas required to voteScrub the minipool: %w", err)
 	}
 
 	// Print the gas info
-	maxFee := eth.GweiToWei(utils.GetWatchtowerMaxFee(t.cfg))
-	if !api.PrintAndCheckGasInfo(gasInfo, false, 0, &t.log, maxFee, 0) {
+	maxFee := math.GweiToWei(utils.GetWatchtowerMaxFee(t.cfg))
+	if !gasLimits.PrintAndCheck(false, 0, &t.log, maxFee, 0) {
 		return nil
 	}
 
 	// Set the gas settings
 	opts.GasFeeCap = maxFee
-	opts.GasTipCap = eth.GweiToWei(utils.GetWatchtowerPrioFee(t.cfg))
-	opts.GasLimit = gasInfo.SafeGasLimit
+	opts.GasTipCap = math.GweiToWei(utils.GetWatchtowerPrioFee(t.cfg))
+	opts.GasLimit = gasLimits.Safe
 
 	// Dissolve
 	hash, err := mp.VoteScrub(opts)
@@ -594,7 +595,7 @@ func (t *submitScrubMinipools) submitVoteScrubMinipool(mp minipool.Minipool) err
 	}
 
 	// Print TX info and wait for it to be included in a block
-	err = api.PrintAndWaitForTransaction(t.cfg, hash, t.rp.Client, &t.log)
+	err = transactions.PrintAndWaitForTransaction(t.cfg, hash, t.rp.Client, &t.log)
 	if err != nil {
 		return err
 	}

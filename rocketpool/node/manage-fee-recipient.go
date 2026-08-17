@@ -5,9 +5,13 @@ import (
 
 	"github.com/docker/docker/client"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/rocketpool/feerecipient"
+
+	"github.com/rocket-pool/smartnode/rocketpool/validator"
+	log "github.com/rocket-pool/smartnode/shared/logger"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/services/alerting"
 	"github.com/rocket-pool/smartnode/shared/services/beacon"
@@ -15,31 +19,29 @@ import (
 	rpsvc "github.com/rocket-pool/smartnode/shared/services/rocketpool"
 	"github.com/rocket-pool/smartnode/shared/services/state"
 	"github.com/rocket-pool/smartnode/shared/services/wallet"
-	"github.com/rocket-pool/smartnode/shared/utils/log"
-	rputils "github.com/rocket-pool/smartnode/shared/utils/rp"
-	"github.com/rocket-pool/smartnode/shared/utils/validator"
 )
 
 // Manage fee recipient task
 type manageFeeRecipient struct {
-	c   *cli.Context
-	log log.ColorLogger
-	cfg *config.RocketPoolConfig
-	w   *wallet.Wallet
-	rp  *rocketpool.RocketPool
-	d   *client.Client
-	bc  beacon.Client
+	c            *cli.Command
+	log          log.ColorLogger
+	cfg          *config.RocketPoolConfig
+	w            wallet.Wallet
+	rp           *rocketpool.RocketPool
+	d            *client.Client
+	bc           beacon.Client
+	stateManager *state.NetworkStateManager
 }
 
 // Create manage fee recipient task
-func newManageFeeRecipient(c *cli.Context, logger log.ColorLogger) (*manageFeeRecipient, error) {
+func newManageFeeRecipient(c *cli.Command, logger log.ColorLogger) (*manageFeeRecipient, error) {
 
 	// Get services
 	cfg, err := services.GetConfig(c)
 	if err != nil {
 		return nil, err
 	}
-	w, err := services.GetWallet(c)
+	w, err := services.GetHdWallet(c)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +59,7 @@ func newManageFeeRecipient(c *cli.Context, logger log.ColorLogger) (*manageFeeRe
 	}
 
 	// Return task
-	return &manageFeeRecipient{
+	task := &manageFeeRecipient{
 		c:   c,
 		log: logger,
 		cfg: cfg,
@@ -65,7 +67,9 @@ func newManageFeeRecipient(c *cli.Context, logger log.ColorLogger) (*manageFeeRe
 		rp:  rp,
 		d:   d,
 		bc:  bc,
-	}, nil
+	}
+	task.stateManager = state.NewNetworkStateManager(rp, cfg.Smartnode.GetStateManagerContracts(), bc, &task.log)
+	return task, nil
 
 }
 
@@ -86,8 +90,22 @@ func (m *manageFeeRecipient) run(state *state.NetworkState) error {
 		return err
 	}
 
+	// Fee recipient is always managed for the real node (HD wallet on disk), not the masquerade
+	// address. In observe mode, the global state is keyed for the masquerade address,
+	// so fetch a dedicated state for the real node.
+	am := wallet.NewAddressManager(m.cfg.Smartnode.GetNodeAddressPath())
+	masqAddress, masqErr := am.LoadAddress()
+	if masqErr == nil && am.IsObserve() {
+		m.log.Printlnf("Node is masquerading as %s; fee recipient management always targets the real node (%s) stored on disk.", masqAddress.Hex(), nodeAccount.Address.Hex())
+		var stateErr error
+		state, stateErr = m.stateManager.GetHeadStateForNode(nodeAccount.Address)
+		if stateErr != nil {
+			return fmt.Errorf("error getting network state for real node %s: %w", nodeAccount.Address.Hex(), stateErr)
+		}
+	}
+
 	// Get the fee recipient info for the node
-	feeRecipientInfo, err := rputils.GetFeeRecipientInfo(m.rp, m.bc, nodeAccount.Address, state)
+	feeRecipientInfo, err := feerecipient.GetDetails(m.rp, m.bc, nodeAccount.Address, state)
 	if err != nil {
 		return fmt.Errorf("error getting fee recipient info: %w", err)
 	}
@@ -96,8 +114,13 @@ func (m *manageFeeRecipient) run(state *state.NetworkState) error {
 	var correctFeeRecipient common.Address
 	if feeRecipientInfo.IsInSmoothingPool || feeRecipientInfo.IsInOptOutCooldown {
 		correctFeeRecipient = feeRecipientInfo.SmoothingPoolAddress
-	} else {
+	} else if feeRecipientInfo.HasMinipools {
+		// If NO has minipools, use the fee distributor address as the global fee recipient.
+		// When they also have megapool validators we're going to need to override the fee recipient on a per key basis.
 		correctFeeRecipient = feeRecipientInfo.FeeDistributorAddress
+	} else {
+		// If NO doesn't have minipools and is not in the smoothing pool, use the megapool address as the global fee recipient.
+		correctFeeRecipient = feeRecipientInfo.MegapoolAddress
 	}
 
 	// Check if the VC is using the correct fee recipient
@@ -106,39 +129,49 @@ func (m *manageFeeRecipient) run(state *state.NetworkState) error {
 		return fmt.Errorf("error validating fee recipient files: %w", err)
 	}
 
-	if !fileExists {
-		m.log.Println("Fee recipient files don't all exist, regenerating...")
-	} else if !correctAddress {
+	if !fileExists || !correctAddress {
 		m.log.Printlnf("WARNING: Fee recipient files did not contain the correct fee recipient of %s, regenerating...", correctFeeRecipient.Hex())
-	} else {
-		// Files are all correct, return.
-		return nil
-	}
-
-	// Regenerate the fee recipient files
-	err = rpsvc.UpdateFeeRecipientFile(correctFeeRecipient, m.cfg)
-	alerting.AlertFeeRecipientChanged(m.cfg, correctFeeRecipient, err == nil)
-	if err != nil {
-		m.log.Println("***ERROR***")
-		m.log.Printlnf("Error updating fee recipient files: %s", err.Error())
-		m.log.Println("Shutting down the validator client for safety to prevent you from being penalized...")
-
-		err = validator.StopValidator(m.cfg, m.bc, &m.log, m.d)
+		// Regenerate the fee recipient files
+		err = rpsvc.UpdateGlobalFeeRecipientFile(correctFeeRecipient, m.cfg)
+		err = alerting.AlertFeeRecipientChanged(m.cfg, correctFeeRecipient, err == nil)
 		if err != nil {
-			return fmt.Errorf("error stopping validator client: %w", err)
+			m.log.Printlnf("error alerting fee recipient changed: %v", err)
 		}
-		return nil
+		if err != nil {
+			m.log.Println("***ERROR***")
+			m.log.Printlnf("Error updating fee recipient files: %s", err.Error())
+			m.log.Println("Shutting down the validator client for safety to prevent you from being penalized...")
+
+			err = validator.StopValidator(m.cfg, m.bc, &m.log, m.d)
+			if err != nil {
+				return fmt.Errorf("error stopping validator client: %w", err)
+			}
+			return nil
+		}
+
+		// Restart the VC
+		m.log.Println("Fee recipient files updated successfully! Restarting validator client...")
+		err = validator.RestartValidator(m.cfg, m.bc, &m.log, m.d)
+		if err != nil {
+			return fmt.Errorf("error restarting validator client: %w", err)
+		}
+
 	}
 
-	// Restart the VC
-	m.log.Println("Fee recipient files updated successfully! Restarting validator client...")
-	err = validator.RestartValidator(m.cfg, m.bc, &m.log, m.d)
-	if err != nil {
-		return fmt.Errorf("error restarting validator client: %w", err)
+	// If minipools + megapool and not on the smoothing pool we need to split fee recipients
+	// The Fee distributor will be the global fee recipient and we override the fee recipient for megapool validator keys
+	if feeRecipientInfo.HasMegapoolValidators && feeRecipientInfo.HasMinipools && !feeRecipientInfo.IsInSmoothingPool {
+		// Get the megapool pubkeys
+		pubkeys := state.MegapoolToPubkeysMap[feeRecipientInfo.MegapoolAddress]
+		// Override megapool validator fee recipients
+		err = rpsvc.UpdateFeeRecipientPerKey(pubkeys, feeRecipientInfo.MegapoolAddress, m.cfg)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Log & return
-	m.log.Println("Successfully restarted, you are now validating safely.")
-	return nil
+	m.log.Println("Successfully checked for the correct fee recipient, you are now validating safely.")
 
+	return nil
 }

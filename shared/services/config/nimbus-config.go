@@ -8,12 +8,12 @@ import (
 
 const (
 	// Testnet
-	nimbusBnTagTest string = "statusim/nimbus-eth2:multiarch-v24.7.0"
-	nimbusVcTagTest string = "statusim/nimbus-validator-client:multiarch-v24.7.0"
+	nimbusBnTagTest string = "statusim/nimbus-eth2:multiarch-v26.7.0"
+	nimbusVcTagTest string = "statusim/nimbus-validator-client:multiarch-v26.7.0"
 
 	// Mainnet
-	nimbusBnTagProd string = "statusim/nimbus-eth2:multiarch-v24.7.0"
-	nimbusVcTagProd string = "statusim/nimbus-validator-client:multiarch-v24.7.0"
+	nimbusBnTagProd string = "statusim/nimbus-eth2:multiarch-v26.7.0"
+	nimbusVcTagProd string = "statusim/nimbus-validator-client:multiarch-v26.7.0"
 
 	defaultNimbusMaxPeersArm uint16 = 100
 	defaultNimbusMaxPeersAmd uint16 = 160
@@ -45,6 +45,9 @@ type NimbusConfig struct {
 	AdditionalVcFlags config.Parameter `yaml:"additionalVcFlags,omitempty"`
 }
 
+// Type assertion for NimbusConfig
+var _ config.ConsensusConfig = &NimbusConfig{}
+
 // Generates a new Nimbus configuration
 func NewNimbusConfig(cfg *RocketPoolConfig) *NimbusConfig {
 	return &NimbusConfig{
@@ -69,7 +72,7 @@ func NewNimbusConfig(cfg *RocketPoolConfig) *NimbusConfig {
 			Default: map[config.Network]interface{}{
 				config.Network_Mainnet: nimbusBnTagProd,
 				config.Network_Devnet:  nimbusBnTagTest,
-				config.Network_Holesky: nimbusBnTagTest,
+				config.Network_Testnet: nimbusBnTagTest,
 			},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2},
 			CanBeBlank:         false,
@@ -84,7 +87,7 @@ func NewNimbusConfig(cfg *RocketPoolConfig) *NimbusConfig {
 			Default: map[config.Network]interface{}{
 				config.Network_Mainnet: nimbusVcTagProd,
 				config.Network_Devnet:  nimbusVcTagTest,
-				config.Network_Holesky: nimbusVcTagTest,
+				config.Network_Testnet: nimbusVcTagTest,
 			},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
 			CanBeBlank:         false,
@@ -114,7 +117,7 @@ func NewNimbusConfig(cfg *RocketPoolConfig) *NimbusConfig {
 		AdditionalBnFlags: config.Parameter{
 			ID:                 "additionalBnFlags",
 			Name:               "Additional Beacon Client Flags",
-			Description:        "Additional custom command line flags you want to pass Nimbus's Beacon Client, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass Nimbus's Beacon Client, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2},
@@ -125,7 +128,7 @@ func NewNimbusConfig(cfg *RocketPoolConfig) *NimbusConfig {
 		AdditionalVcFlags: config.Parameter{
 			ID:                 "additionalVcFlags",
 			Name:               "Additional Validator Client Flags",
-			Description:        "Additional custom command line flags you want to pass Nimbus's Validator Client, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass Nimbus's Validator Client, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
@@ -167,7 +170,7 @@ func (cfg *NimbusConfig) GetName() string {
 	return "Nimbus"
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *NimbusConfig) GetConfigTitle() string {
 	return cfg.Title
 }

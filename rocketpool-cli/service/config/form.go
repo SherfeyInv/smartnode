@@ -61,6 +61,9 @@ type Form struct {
 
 	// An optional function which is called when the form item changes.
 	changed func(index int)
+
+	// When set, navigation between form items is blocked while this returns true.
+	navigationBlocked func() bool
 }
 
 // NewForm returns a new form.
@@ -336,7 +339,7 @@ func (f *Form) GetFormItemIndex(label string) int {
 }
 
 // GetFocusedItemIndex returns the indices of the form element or button which
-// currently has focus. If they don't, -1 is returned resepectively.
+// currently has focus. If they don't, -1 is returned respectively.
 func (f *Form) GetFocusedItemIndex() (formItem, button int) {
 	index := f.focusIndex()
 	if index < 0 {
@@ -355,6 +358,13 @@ func (f *Form) SetCancelFunc(callback func()) *Form {
 	return f
 }
 
+// SetNavigationBlocked sets a callback that blocks Tab/Enter/Backtab navigation
+// between form items while it returns true.
+func (f *Form) SetNavigationBlocked(blocked func() bool) *Form {
+	f.navigationBlocked = blocked
+	return f
+}
+
 // SetChangedFunc sets a handler which is called when the user moves to
 // another field in the form.
 func (f *Form) SetChangedFunc(callback func(index int)) *Form {
@@ -364,7 +374,7 @@ func (f *Form) SetChangedFunc(callback func(index int)) *Form {
 
 // Draw draws this primitive onto the screen.
 func (f *Form) Draw(screen tcell.Screen) {
-	f.Box.DrawForSubclass(screen, f)
+	f.DrawForSubclass(screen, f)
 
 	// Determine the actual item that has focus.
 	if index := f.focusIndex(); index >= 0 {
@@ -455,9 +465,10 @@ func (f *Form) Draw(screen tcell.Screen) {
 
 	// Where do we place them?
 	if !f.horizontal && x+buttonsWidth < rightLimit {
-		if f.buttonsAlign == tview.AlignRight {
+		switch f.buttonsAlign {
+		case tview.AlignRight:
 			x = rightLimit - buttonsWidth
-		} else if f.buttonsAlign == tview.AlignCenter {
+		case tview.AlignCenter:
 			x = (x + rightLimit - buttonsWidth) / 2
 		}
 
@@ -573,6 +584,9 @@ func (f *Form) Focus(delegate func(p tview.Primitive)) {
 		f.focusedElement = 0
 	}
 	handler := func(key tcell.Key) {
+		if f.navigationBlocked != nil && f.navigationBlocked() {
+			return
+		}
 		switch key {
 		case tcell.KeyTab, tcell.KeyEnter:
 			f.focusedElement++

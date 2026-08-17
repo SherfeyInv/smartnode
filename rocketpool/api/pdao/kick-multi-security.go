@@ -1,17 +1,16 @@
 package pdao
 
 import (
-	"fmt"
-
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/dao/protocol"
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/protocol"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
-	"github.com/urfave/cli"
 )
 
-func canProposeKickMultiFromSecurityCouncil(c *cli.Context, addresses []common.Address) (*api.PDAOCanProposeKickMultiFromSecurityCouncilResponse, error) {
+func canProposeKickMultiFromSecurityCouncil(c *cli.Command, addresses []common.Address) (*api.PDAOCanProposeKickMultiFromSecurityCouncilResponse, error) {
 	// Get services
 	w, err := services.GetWallet(c)
 	if err != nil {
@@ -45,24 +44,20 @@ func canProposeKickMultiFromSecurityCouncil(c *cli.Context, addresses []common.A
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := protocol.EstimateProposeKickMultiFromSecurityCouncilGas(rp, message, addresses, blockNumber, pollard, opts)
+	gasLimits, err := protocol.EstimateProposeKickMultiFromSecurityCouncilGas(rp, message, addresses, blockNumber, pollard, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	// Update & return response
 	response.BlockNumber = blockNumber
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return &response, nil
 }
 
-func proposeKickMultiFromSecurityCouncil(c *cli.Context, addresses []common.Address, blockNumber uint32) (*api.PDAOProposeKickMultiFromSecurityCouncilResponse, error) {
+func proposeKickMultiFromSecurityCouncil(c *cli.Command, addresses []common.Address, blockNumber uint32, opts *bind.TransactOpts) (*api.PDAOProposeKickMultiFromSecurityCouncilResponse, error) {
 	// Get services
 	cfg, err := services.GetConfig(c)
-	if err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
 	if err != nil {
 		return nil, err
 	}
@@ -77,18 +72,6 @@ func proposeKickMultiFromSecurityCouncil(c *cli.Context, addresses []common.Addr
 
 	// Response
 	response := api.PDAOProposeKickMultiFromSecurityCouncilResponse{}
-
-	// Get node account
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Propose
 	message := "kick multiple members from the security council"

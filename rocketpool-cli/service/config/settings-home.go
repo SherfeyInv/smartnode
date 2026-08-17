@@ -5,7 +5,6 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
-	"github.com/rocket-pool/smartnode/shared/types/config"
 )
 
 const settingsHomeID string = "settings-home"
@@ -20,17 +19,18 @@ type settingsHome struct {
 	fallbackPage     *FallbackConfigPage
 	ccPage           *ConsensusConfigPage
 	mevBoostPage     *MevBoostConfigPage
+	commitBoostPage  *CommitBoostConfigPage
 	metricsPage      *MetricsConfigPage
 	alertingPage     *AlertingConfigPage
 	addonsPage       *AddonsPage
 	categoryList     *tview.List
 	settingsSubpages []settingsPage
 	content          tview.Primitive
-	md               *mainDisplay
+	md               *MainDisplay
 }
 
 // Creates a new SettingsHome instance and adds (and its subpages) it to the main display.
-func newSettingsHome(md *mainDisplay) *settingsHome {
+func newSettingsHome(md *MainDisplay) *settingsHome {
 
 	homePage := newPage(nil, settingsHomeID, "Categories", "", nil)
 
@@ -46,6 +46,7 @@ func newSettingsHome(md *mainDisplay) *settingsHome {
 	home.ccPage = NewConsensusConfigPage(home)
 	home.fallbackPage = NewFallbackConfigPage(home)
 	home.mevBoostPage = NewMevBoostConfigPage(home)
+	home.commitBoostPage = NewCommitBoostConfigPage(home)
 	home.metricsPage = NewMetricsConfigPage(home)
 	home.alertingPage = NewAlertingConfigPage(home)
 	home.addonsPage = NewAddonsPage(home)
@@ -55,6 +56,7 @@ func newSettingsHome(md *mainDisplay) *settingsHome {
 		home.ccPage,
 		home.fallbackPage,
 		home.mevBoostPage,
+		home.commitBoostPage,
 		home.metricsPage,
 		home.alertingPage,
 		home.addonsPage,
@@ -80,12 +82,7 @@ func (home *settingsHome) createContent() {
 	// Create the category list
 	categoryList := tview.NewList().
 		SetChangedFunc(func(index int, mainText, secondaryText string, shortcut rune) {
-			if (home.md.Config.Smartnode.Network.Value == config.Network_Holesky || home.md.Config.Smartnode.Network.Value == config.Network_Devnet) && home.settingsSubpages[index].getPage().id == "settings-mev-boost" {
-				// Disable MEV-Boost for Holesky
-				layout.descriptionBox.SetText("MEV-Boost is currently disabled for the Holesky test network.")
-			} else {
-				layout.descriptionBox.SetText(home.settingsSubpages[index].getPage().description)
-			}
+			layout.descriptionBox.SetText(home.settingsSubpages[index].getPage().description)
 		})
 	categoryList.SetBackgroundColor(tview.Styles.ContrastBackgroundColor)
 	categoryList.SetBorderPadding(0, 0, 1, 1)
@@ -105,13 +102,8 @@ func (home *settingsHome) createContent() {
 		categoryList.AddItem(subpage.getPage().title, "", 0, nil)
 	}
 	categoryList.SetSelectedFunc(func(i int, s1, s2 string, r rune) {
-		if (home.md.Config.Smartnode.Network.Value == config.Network_Holesky || home.md.Config.Smartnode.Network.Value == config.Network_Devnet) && home.settingsSubpages[i].getPage().id == "settings-mev-boost" {
-			// Disable MEV-Boost for Holesky
-			return
-		} else {
-			home.settingsSubpages[i].handleLayoutChanged()
-			home.md.setPage(home.settingsSubpages[i].getPage())
-		}
+		home.settingsSubpages[i].handleLayoutChanged()
+		home.md.setPage(home.settingsSubpages[i].getPage())
 	})
 
 	// Make it the content of the layout and set the default description text
@@ -140,7 +132,10 @@ func (home *settingsHome) createFooter() (tview.Primitive, int) {
 		AddItem(nil, 0, 1, false).
 		AddItem(navTextView1, len(navString1), 1, false).
 		AddItem(nil, 0, 1, false)
-	fmt.Fprint(navTextView1, navString1)
+	_, err := fmt.Fprint(navTextView1, navString1)
+	if err != nil {
+		panic(fmt.Errorf("error writing nav string 1: %w", err))
+	}
 
 	navString2 := "Tab: Go to the Buttons   Ctrl+C: Quit without Saving"
 	navTextView2 := tview.NewTextView().
@@ -151,7 +146,10 @@ func (home *settingsHome) createFooter() (tview.Primitive, int) {
 		AddItem(nil, 0, 1, false).
 		AddItem(navTextView2, len(navString2), 1, false).
 		AddItem(nil, 0, 1, false)
-	fmt.Fprint(navTextView2, navString2)
+	_, err = fmt.Fprint(navTextView2, navString2)
+	if err != nil {
+		panic(fmt.Errorf("error writing nav string 2: %w", err))
+	}
 
 	// Save and Quit buttons
 	saveButton := tview.NewButton("Review Changes and Save")
@@ -243,6 +241,10 @@ func (home *settingsHome) refresh() {
 
 	if home.mevBoostPage != nil {
 		home.mevBoostPage.layout.refresh()
+	}
+
+	if home.commitBoostPage != nil {
+		home.commitBoostPage.layout.refresh()
 	}
 
 	if home.metricsPage != nil {

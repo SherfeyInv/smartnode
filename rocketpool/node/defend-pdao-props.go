@@ -1,16 +1,21 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"math/big"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/dao/protocol"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/types"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/protocol"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/transactions"
+	"github.com/rocket-pool/smartnode/bindings/types"
+	log "github.com/rocket-pool/smartnode/shared/logger"
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/services/beacon"
 	"github.com/rocket-pool/smartnode/shared/services/config"
@@ -18,9 +23,6 @@ import (
 	"github.com/rocket-pool/smartnode/shared/services/proposals"
 	"github.com/rocket-pool/smartnode/shared/services/state"
 	"github.com/rocket-pool/smartnode/shared/services/wallet"
-	"github.com/rocket-pool/smartnode/shared/utils/api"
-	"github.com/rocket-pool/smartnode/shared/utils/log"
-	"github.com/urfave/cli"
 )
 
 type defendableProposal struct {
@@ -29,10 +31,10 @@ type defendableProposal struct {
 }
 
 type defendPdaoProps struct {
-	c                *cli.Context
+	c                *cli.Command
 	log              *log.ColorLogger
 	cfg              *config.RocketPoolConfig
-	w                *wallet.Wallet
+	w                wallet.Wallet
 	rp               *rocketpool.RocketPool
 	bc               beacon.Client
 	gasThreshold     float64
@@ -43,11 +45,11 @@ type defendPdaoProps struct {
 	propMgr          *proposals.ProposalManager
 	lastScannedBlock *big.Int
 
-	// Smartnode parameters
+	//Smart Node parameters
 	intervalSize *big.Int
 }
 
-func newDefendPdaoProps(c *cli.Context, logger log.ColorLogger) (*defendPdaoProps, error) {
+func newDefendPdaoProps(c *cli.Command, logger log.ColorLogger) (*defendPdaoProps, error) {
 	// Get services
 	cfg, err := services.GetConfig(c)
 	if err != nil {
@@ -74,17 +76,17 @@ func newDefendPdaoProps(c *cli.Context, logger log.ColorLogger) (*defendPdaoProp
 	if maxFeeGwei == 0 {
 		maxFee = nil
 	} else {
-		maxFee = eth.GweiToWei(maxFeeGwei)
+		maxFee = math.GweiToWei(maxFeeGwei)
 	}
 
 	// Get the user-requested priority fee
 	priorityFeeGwei := cfg.Smartnode.PriorityFee.Value.(float64)
 	var priorityFee *big.Int
 	if priorityFeeGwei == 0 {
-		logger.Println("WARNING: priority fee was missing or 0, setting a default of 2.")
-		priorityFee = eth.GweiToWei(2)
+		logger.Printlnf("WARNING: priority fee was missing or 0, setting a default of %.2f.", rpgas.DefaultPriorityFeeGwei)
+		priorityFee = math.GweiToWei(rpgas.DefaultPriorityFeeGwei)
 	} else {
-		priorityFee = eth.GweiToWei(priorityFeeGwei)
+		priorityFee = math.GweiToWei(priorityFeeGwei)
 	}
 
 	// Get the event interval size
@@ -98,6 +100,9 @@ func newDefendPdaoProps(c *cli.Context, logger log.ColorLogger) (*defendPdaoProp
 
 	// Make a proposal manager
 	propMgr, err := proposals.NewProposalManager(&logger, cfg, rp, bc)
+	if err != nil {
+		return nil, fmt.Errorf("error creating proposal manager: %w", err)
+	}
 
 	// Return task
 	return &defendPdaoProps{
@@ -183,8 +188,16 @@ func (t *defendPdaoProps) getDefendableProposals(state *state.NetworkState, opts
 			return nil, fmt.Errorf("beacon block at slot %d was missing", startSlot)
 		}
 
-		// Get the EL block for this slot
-		startBlock = big.NewInt(int64(block.ExecutionBlockNumber))
+		// Get the EL block for this slot. Gloas blocks only commit to the EL block hash, so the
+		// number has to be resolved.
+		elBlockNumber, hasElBlock, err := beacon.ResolveExecutionBlockNumber(context.Background(), t.rp.Client, block)
+		if err != nil {
+			return nil, err
+		}
+		if !hasElBlock {
+			return nil, fmt.Errorf("beacon block at slot %d has no execution block", startSlot)
+		}
+		startBlock = big.NewInt(int64(elBlockNumber))
 	} else {
 		startBlock = big.NewInt(0).Add(t.lastScannedBlock, common.Big1)
 	}
@@ -247,28 +260,28 @@ func (t *defendPdaoProps) defendProposal(prop defendableProposal) error {
 	}
 
 	// Get the gas limit
-	gasInfo, err := protocol.EstimateSubmitRootGas(t.rp, propID, challengedIndex, pollard, opts)
+	gasLimits, err := protocol.EstimateSubmitRootGas(t.rp, propID, challengedIndex, pollard, opts)
 	if err != nil {
 		return fmt.Errorf("error estimating the gas required to respond to challenge against proposal %d, index %d: %w", propID, challengedIndex, err)
 	}
-	gas := big.NewInt(int64(gasInfo.SafeGasLimit))
+	gas := big.NewInt(int64(gasLimits.Safe))
 
 	// Get the max fee
 	maxFee := t.maxFee
 	if maxFee == nil || maxFee.Uint64() == 0 {
-		maxFee, err = rpgas.GetHeadlessMaxFeeWei()
+		maxFee, err = rpgas.GetHeadlessMaxFeeWeiWithLatestBlock(t.cfg, t.rp)
 		if err != nil {
 			return err
 		}
 	}
 
 	// Print the gas info
-	if !api.PrintAndCheckGasInfo(gasInfo, true, t.gasThreshold, t.log, maxFee, t.gasLimit) {
+	if !gasLimits.PrintAndCheck(true, t.gasThreshold, t.log, maxFee, t.gasLimit) {
 		t.log.Println("NOTICE: Challenge responses bypass the automatic TX gas threshold, responding for safety.")
 	}
 
 	opts.GasFeeCap = maxFee
-	opts.GasTipCap = t.maxPriorityFee
+	opts.GasTipCap = GetPriorityFee(t.maxPriorityFee, maxFee)
 	opts.GasLimit = gas.Uint64()
 
 	// Respond to the challenge
@@ -278,7 +291,7 @@ func (t *defendPdaoProps) defendProposal(prop defendableProposal) error {
 	}
 
 	// Print TX info and wait for it to be included in a block
-	err = api.PrintAndWaitForTransaction(t.cfg, hash, t.rp.Client, t.log)
+	err = transactions.PrintAndWaitForTransaction(t.cfg, hash, t.rp.Client, t.log)
 	if err != nil {
 		return err
 	}

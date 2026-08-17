@@ -13,26 +13,46 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/fatih/color"
+
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	clicolor "github.com/rocket-pool/smartnode/rocketpool-cli/cli/color"
+	log "github.com/rocket-pool/smartnode/shared/logger"
 	"github.com/rocket-pool/smartnode/shared/services/config"
 	"github.com/rocket-pool/smartnode/shared/types/api"
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
-	"github.com/rocket-pool/smartnode/shared/utils/log"
 )
 
 // This is a proxy for multiple ETH clients, providing natural fallback support if one of them fails.
 type ExecutionClientManager struct {
 	primaryEcUrl    string
 	fallbackEcUrl   string
-	primaryEc       *ethclient.Client
-	fallbackEc      *ethclient.Client
+	primaryEc       *EthClient
+	fallbackEc      *EthClient
 	logger          log.ColorLogger
 	primaryReady    bool
 	fallbackReady   bool
 	ignoreSyncCheck bool
+
+	// static, when non-nil, satisfies every public method of this manager
+	// directly from the provided client instead of dialling a live EC.
+	// It is set by NewStaticExecutionClientManager and used when the daemon
+	// is running in --network-state mode.
+	static rocketpool.ExecutionClient
+}
+
+// NewStaticExecutionClientManager returns an ExecutionClientManager whose
+// public methods all delegate to the provided ExecutionClient. No network
+// connections are established.
+func NewStaticExecutionClientManager(static rocketpool.ExecutionClient) *ExecutionClientManager {
+	return &ExecutionClientManager{
+		static:        static,
+		primaryReady:  true,
+		fallbackReady: false,
+	}
 }
 
 // This is a signature for a wrapped ethclient.Client function
-type ecFunction func(*ethclient.Client) (interface{}, error)
+type ecFunction func(*EthClient) (interface{}, error)
 
 // Creates a new ExecutionClientManager instance based on the Rocket Pool config
 func NewExecutionClientManager(cfg *config.RocketPoolConfig) (*ExecutionClientManager, error) {
@@ -77,15 +97,18 @@ func NewExecutionClientManager(cfg *config.RocketPoolConfig) (*ExecutionClientMa
 		}
 	}
 
-	return &ExecutionClientManager{
+	out := &ExecutionClientManager{
 		primaryEcUrl:  primaryEcUrl,
 		fallbackEcUrl: fallbackEcUrl,
-		primaryEc:     primaryEc,
-		fallbackEc:    fallbackEc,
+		primaryEc:     &EthClient{primaryEc},
 		logger:        log.NewColorLogger(color.FgYellow),
 		primaryReady:  true,
 		fallbackReady: fallbackEc != nil,
-	}, nil
+	}
+	if fallbackEc != nil {
+		out.fallbackEc = &EthClient{fallbackEc}
+	}
+	return out, nil
 
 }
 
@@ -96,7 +119,10 @@ func NewExecutionClientManager(cfg *config.RocketPoolConfig) (*ExecutionClientMa
 // CodeAt returns the code of the given account. This is needed to differentiate
 // between contract internal errors and the local chain being out of sync.
 func (p *ExecutionClientManager) CodeAt(ctx context.Context, contract common.Address, blockNumber *big.Int) ([]byte, error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.CodeAt(ctx, contract, blockNumber)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.CodeAt(ctx, contract, blockNumber)
 	})
 	if err != nil {
@@ -108,7 +134,10 @@ func (p *ExecutionClientManager) CodeAt(ctx context.Context, contract common.Add
 // CallContract executes an Ethereum contract call with the specified data as the
 // input.
 func (p *ExecutionClientManager) CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.CallContract(ctx, call, blockNumber)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.CallContract(ctx, call, blockNumber)
 	})
 	if err != nil {
@@ -123,7 +152,10 @@ func (p *ExecutionClientManager) CallContract(ctx context.Context, call ethereum
 
 // HeaderByHash returns the block header with the given hash.
 func (p *ExecutionClientManager) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.HeaderByHash(ctx, hash)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.HeaderByHash(ctx, hash)
 	})
 	if err != nil {
@@ -135,7 +167,10 @@ func (p *ExecutionClientManager) HeaderByHash(ctx context.Context, hash common.H
 // HeaderByNumber returns a block header from the current canonical chain. If number is
 // nil, the latest known header is returned.
 func (p *ExecutionClientManager) HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.HeaderByNumber(ctx, number)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.HeaderByNumber(ctx, number)
 	})
 	if err != nil {
@@ -144,9 +179,27 @@ func (p *ExecutionClientManager) HeaderByNumber(ctx context.Context, number *big
 	return result.(*types.Header), err
 }
 
+// BlockByNumber returns a block from the current canonical chain. If number is nil, the latest known block is
+// returned.
+func (p *ExecutionClientManager) BlockByNumber(ctx context.Context, number *big.Int) (*types.Block, error) {
+	if p.static != nil {
+		return nil, fmt.Errorf("BlockByNumber is not supported by the static execution client")
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
+		return client.BlockByNumber(ctx, number)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*types.Block), err
+}
+
 // PendingCodeAt returns the code of the given account in the pending state.
 func (p *ExecutionClientManager) PendingCodeAt(ctx context.Context, account common.Address) ([]byte, error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.PendingCodeAt(ctx, account)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.PendingCodeAt(ctx, account)
 	})
 	if err != nil {
@@ -157,7 +210,10 @@ func (p *ExecutionClientManager) PendingCodeAt(ctx context.Context, account comm
 
 // PendingNonceAt retrieves the current pending nonce associated with an account.
 func (p *ExecutionClientManager) PendingNonceAt(ctx context.Context, account common.Address) (uint64, error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.PendingNonceAt(ctx, account)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.PendingNonceAt(ctx, account)
 	})
 	if err != nil {
@@ -169,7 +225,10 @@ func (p *ExecutionClientManager) PendingNonceAt(ctx context.Context, account com
 // SuggestGasPrice retrieves the currently suggested gas price to allow a timely
 // execution of a transaction.
 func (p *ExecutionClientManager) SuggestGasPrice(ctx context.Context) (*big.Int, error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.SuggestGasPrice(ctx)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.SuggestGasPrice(ctx)
 	})
 	if err != nil {
@@ -181,7 +240,10 @@ func (p *ExecutionClientManager) SuggestGasPrice(ctx context.Context) (*big.Int,
 // SuggestGasTipCap retrieves the currently suggested 1559 priority fee to allow
 // a timely execution of a transaction.
 func (p *ExecutionClientManager) SuggestGasTipCap(ctx context.Context) (*big.Int, error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.SuggestGasTipCap(ctx)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.SuggestGasTipCap(ctx)
 	})
 	if err != nil {
@@ -196,7 +258,10 @@ func (p *ExecutionClientManager) SuggestGasTipCap(ctx context.Context) (*big.Int
 // transactions may be added or removed by miners, but it should provide a basis
 // for setting a reasonable default.
 func (p *ExecutionClientManager) EstimateGas(ctx context.Context, call ethereum.CallMsg) (gas uint64, err error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.EstimateGas(ctx, call)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.EstimateGas(ctx, call)
 	})
 	if err != nil {
@@ -207,7 +272,10 @@ func (p *ExecutionClientManager) EstimateGas(ctx context.Context, call ethereum.
 
 // SendTransaction injects the transaction into the pending pool for execution.
 func (p *ExecutionClientManager) SendTransaction(ctx context.Context, tx *types.Transaction) error {
-	_, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.SendTransaction(ctx, tx)
+	}
+	_, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return nil, client.SendTransaction(ctx, tx)
 	})
 	return err
@@ -222,7 +290,10 @@ func (p *ExecutionClientManager) SendTransaction(ctx context.Context, tx *types.
 //
 // TODO(karalabe): Deprecate when the subscription one can return past data too.
 func (p *ExecutionClientManager) FilterLogs(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.FilterLogs(ctx, query)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.FilterLogs(ctx, query)
 	})
 	if err != nil {
@@ -234,7 +305,10 @@ func (p *ExecutionClientManager) FilterLogs(ctx context.Context, query ethereum.
 // SubscribeFilterLogs creates a background log filtering operation, returning
 // a subscription immediately, which can be used to stream the found events.
 func (p *ExecutionClientManager) SubscribeFilterLogs(ctx context.Context, query ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.SubscribeFilterLogs(ctx, query, ch)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.SubscribeFilterLogs(ctx, query, ch)
 	})
 	if err != nil {
@@ -250,7 +324,10 @@ func (p *ExecutionClientManager) SubscribeFilterLogs(ctx context.Context, query 
 // TransactionReceipt returns the receipt of a transaction by transaction hash.
 // Note that the receipt is not available for pending transactions.
 func (p *ExecutionClientManager) TransactionReceipt(ctx context.Context, txHash common.Hash) (*types.Receipt, error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.TransactionReceipt(ctx, txHash)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.TransactionReceipt(ctx, txHash)
 	})
 	if err != nil {
@@ -265,7 +342,10 @@ func (p *ExecutionClientManager) TransactionReceipt(ctx context.Context, txHash 
 
 // BlockNumber returns the most recent block number
 func (p *ExecutionClientManager) BlockNumber(ctx context.Context) (uint64, error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.BlockNumber(ctx)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.BlockNumber(ctx)
 	})
 	if err != nil {
@@ -277,7 +357,10 @@ func (p *ExecutionClientManager) BlockNumber(ctx context.Context) (uint64, error
 // BalanceAt returns the wei balance of the given account.
 // The block number can be nil, in which case the balance is taken from the latest known block.
 func (p *ExecutionClientManager) BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.BalanceAt(ctx, account, blockNumber)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.BalanceAt(ctx, account, blockNumber)
 	})
 	if err != nil {
@@ -288,7 +371,10 @@ func (p *ExecutionClientManager) BalanceAt(ctx context.Context, account common.A
 
 // TransactionByHash returns the transaction with the given hash.
 func (p *ExecutionClientManager) TransactionByHash(ctx context.Context, hash common.Hash) (tx *types.Transaction, isPending bool, err error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.TransactionByHash(ctx, hash)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		tx, isPending, err := client.TransactionByHash(ctx, hash)
 		result := []interface{}{tx, isPending}
 		return result, err
@@ -307,7 +393,10 @@ func (p *ExecutionClientManager) TransactionByHash(ctx context.Context, hash com
 // NonceAt returns the account nonce of the given account.
 // The block number can be nil, in which case the nonce is taken from the latest known block.
 func (p *ExecutionClientManager) NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.NonceAt(ctx, account, blockNumber)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.NonceAt(ctx, account, blockNumber)
 	})
 	if err != nil {
@@ -319,7 +408,10 @@ func (p *ExecutionClientManager) NonceAt(ctx context.Context, account common.Add
 // SyncProgress retrieves the current progress of the sync algorithm. If there's
 // no sync currently running, it returns nil.
 func (p *ExecutionClientManager) SyncProgress(ctx context.Context) (*ethereum.SyncProgress, error) {
-	result, err := p.runFunction(func(client *ethclient.Client) (interface{}, error) {
+	if p.static != nil {
+		return p.static.SyncProgress(ctx)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
 		return client.SyncProgress(ctx)
 	})
 	if err != nil {
@@ -328,11 +420,51 @@ func (p *ExecutionClientManager) SyncProgress(ctx context.Context) (*ethereum.Sy
 	return result.(*ethereum.SyncProgress), err
 }
 
+func (p *ExecutionClientManager) LatestBlockTime(ctx context.Context) (time.Time, error) {
+	if p.static != nil {
+		return p.static.LatestBlockTime(ctx)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
+		return client.LatestBlockTime(ctx)
+	})
+	if err != nil {
+		return time.Time{}, err
+	}
+	return result.(time.Time), err
+}
+
+// BlockNumber returns the most recent block number
+func (p *ExecutionClientManager) ChainID(ctx context.Context) (*big.Int, error) {
+	if p.static != nil {
+		return p.static.ChainID(ctx)
+	}
+	result, err := p.runFunction(func(client *EthClient) (interface{}, error) {
+		return client.ChainID(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*big.Int), err
+}
+
 /// ==================
 /// Internal functions
 /// ==================
 
 func (p *ExecutionClientManager) CheckStatus(cfg *config.RocketPoolConfig) *api.ClientManagerStatus {
+
+	// In static mode we have no real clients to probe; report the synthetic
+	// "primary is working and synced" status.
+	if p.static != nil {
+		return &api.ClientManagerStatus{
+			FallbackEnabled: false,
+			PrimaryClientStatus: api.ClientStatus{
+				IsWorking:    true,
+				IsSynced:     true,
+				SyncProgress: 1,
+			},
+		}
+	}
 
 	status := &api.ClientManagerStatus{
 		FallbackEnabled: p.fallbackEc != nil,
@@ -362,9 +494,7 @@ func (p *ExecutionClientManager) CheckStatus(cfg *config.RocketPoolConfig) *api.
 		expectedChainID := cfg.Smartnode.GetChainID()
 		if status.FallbackClientStatus.Error == "" && status.FallbackClientStatus.NetworkId != expectedChainID {
 			p.fallbackReady = false
-			colorReset := "\033[0m"
-			colorYellow := "\033[33m"
-			status.FallbackClientStatus.Error = fmt.Sprintf("The fallback client is using a different chain [%s%s%s, Chain ID %d] than what your node is configured for [%s, Chain ID %d]", colorYellow, getNetworkNameFromId(status.FallbackClientStatus.NetworkId), colorReset, status.FallbackClientStatus.NetworkId, getNetworkNameFromId(expectedChainID), expectedChainID)
+			status.FallbackClientStatus.Error = fmt.Sprintf("The fallback client is using a different chain [%s, Chain ID %d] than what your node is configured for [%s, Chain ID %d]", clicolor.Yellow(getNetworkNameFromId(status.FallbackClientStatus.NetworkId)), status.FallbackClientStatus.NetworkId, getNetworkNameFromId(expectedChainID), expectedChainID)
 			return status
 		}
 	}
@@ -378,21 +508,29 @@ func getNetworkNameFromId(networkId uint) string {
 	switch networkId {
 	case 1:
 		return "Ethereum Mainnet"
-	case 17000:
-		return "Holesky Testnet"
+	case 560048:
+		return "Hoodi Testnet"
 	default:
 		return "Unknown Network"
 	}
 
 }
 
+// ecStatusTimeout is the per-call deadline used when probing an EC for its
+// network ID, sync progress, or latest block.  10 seconds is long enough to
+// tolerate transient load on a healthy client while still returning quickly
+// when the client is unresponsive.
+const ecStatusTimeout = 10 * time.Second
+
 // Check the client status
-func checkEcStatus(client *ethclient.Client) api.ClientStatus {
+func checkEcStatus(client *EthClient) api.ClientStatus {
 
 	status := api.ClientStatus{}
 
 	// Get the NetworkId
-	networkId, err := client.NetworkID(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), ecStatusTimeout)
+	networkId, err := client.NetworkID(ctx)
+	cancel()
 	if err != nil {
 		status.Error = fmt.Sprintf("Sync progress check failed with [%s]", err.Error())
 		status.IsSynced = false
@@ -404,8 +542,10 @@ func checkEcStatus(client *ethclient.Client) api.ClientStatus {
 		status.NetworkId = uint(networkId.Uint64())
 	}
 
-	// Get the fallback's sync progress
-	progress, err := client.SyncProgress(context.Background())
+	// Get the sync progress
+	ctx, cancel = context.WithTimeout(context.Background(), ecStatusTimeout)
+	progress, err := client.SyncProgress(ctx)
+	cancel()
 	if err != nil {
 		status.Error = fmt.Sprintf("Sync progress check failed with [%s]", err.Error())
 		status.IsSynced = false

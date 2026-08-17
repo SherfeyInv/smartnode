@@ -5,9 +5,11 @@ import (
 	"os"
 
 	"github.com/docker/docker/client"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+
+	log "github.com/rocket-pool/smartnode/shared/logger"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/services/beacon"
 	"github.com/rocket-pool/smartnode/shared/services/config"
@@ -15,22 +17,21 @@ import (
 	"github.com/rocket-pool/smartnode/shared/services/state"
 	"github.com/rocket-pool/smartnode/shared/services/wallet"
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
-	"github.com/rocket-pool/smartnode/shared/utils/log"
 )
 
 // Manage download rewards trees task
 type downloadRewardsTrees struct {
-	c   *cli.Context
+	c   *cli.Command
 	log log.ColorLogger
 	cfg *config.RocketPoolConfig
-	w   *wallet.Wallet
+	w   wallet.Wallet
 	rp  *rocketpool.RocketPool
 	d   *client.Client
 	bc  beacon.Client
 }
 
 // Create manage fee recipient task
-func newDownloadRewardsTrees(c *cli.Context, logger log.ColorLogger) (*downloadRewardsTrees, error) {
+func newDownloadRewardsTrees(c *cli.Command, logger log.ColorLogger) (*downloadRewardsTrees, error) {
 
 	// Get services
 	cfg, err := services.GetConfig(c)
@@ -96,7 +97,7 @@ func (d *downloadRewardsTrees) run(state *state.NetworkState) error {
 	missingIntervals := []uint64{}
 	for i := uint64(0); i < currentIndex; i++ {
 		// Check if the tree file exists
-		treeFilePath := d.cfg.Smartnode.GetRewardsTreePath(i, true)
+		treeFilePath := d.cfg.Smartnode.GetRewardsTreePath(i, true, config.RewardsExtensionJSON)
 		_, err = os.Stat(treeFilePath)
 		if os.IsNotExist(err) {
 			d.log.Printlnf("You are missing the rewards tree file for interval %d.", i)

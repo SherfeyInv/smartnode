@@ -1,12 +1,13 @@
 package pdao
 
 import (
+	"context"
 	"fmt"
 
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
-	"github.com/rocket-pool/rocketpool-go/settings/protocol"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
+	"github.com/rocket-pool/smartnode/bindings/settings/protocol"
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
 )
 
 const (
@@ -17,26 +18,28 @@ const (
 	percentUsage          string = "specify a percentage between 0 and 1 (e.g., '0.51' for 51%)"
 	unboundedPercentUsage string = "specify a percentage that can go over 100% (e.g., '1.5' for 150%)"
 	uintUsage             string = "specify an integer (e.g., '50')"
+	epochCountUsage       string = "specify a number, in epochs (eg., '100')"
 	durationUsage         string = "specify a duration using hours, minutes, and seconds (e.g., '20m' or '72h0m0s')"
+	addressListUsage      string = "specify a list of one or more addresses separated by commas (e.g., '0x1a2b3c4d5e6f7890abcdef1234567890abcdef12,0xabcdefabcdefabcdefabcdefabcdefabcdefabcd')"
 )
 
 // Register commands
-func RegisterCommands(app *cli.App, name string, aliases []string) {
-	app.Commands = append(app.Commands, cli.Command{
+func RegisterCommands(app *cli.Command, name string, aliases []string) {
+	app.Commands = append(app.Commands, &cli.Command{
 		Name:    name,
 		Aliases: aliases,
 		Usage:   "Manage the Rocket Pool Protocol DAO",
-		Subcommands: []cli.Command{
+		Commands: []*cli.Command{
 
 			{
 				Name:      "status",
 				Aliases:   []string{"s"},
 				Usage:     "Get the pdao status",
 				UsageText: "rocketpool pdao status",
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Run
-					return getStatus(c)
+					return getStatus()
 
 				},
 			},
@@ -46,10 +49,10 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Aliases:   []string{"st"},
 				Usage:     "Show all of the current Protocol DAO settings and values",
 				UsageText: "rocketpool pdao settings",
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Run
-					return getSettings(c)
+					return getSettings()
 
 				},
 			},
@@ -59,22 +62,10 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Aliases:   []string{"rp"},
 				Usage:     "View the RPL rewards allocation percentages for node operators, the Oracle DAO, and the Protocol DAO",
 				UsageText: "rocketpool pdao rewards-percentages",
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Run
-					return getRewardsPercentages(c)
-
-				},
-			},
-			{
-				Name:      "initialize-voting",
-				Aliases:   []string{"iv"},
-				Usage:     "Unlocks a node operator's voting power (only required for node operators who registered before governance structure was in place)",
-				UsageText: "rocketpool pdao initialize-voting",
-				Action: func(c *cli.Context) error {
-
-					// Run
-					return initializeVotingPrompt(c)
+					return getRewardsPercentages()
 
 				},
 			},
@@ -84,12 +75,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Usage:     "Set the address you want to use to represent your node on Snapshot",
 				UsageText: "rocketpool pdao set-signalling-address signalling-address signature",
 				Flags: []cli.Flag{
-					cli.BoolFlag{
-						Name:  "yes, y",
-						Usage: "Automatically confirm all interactive questions",
+					&cli.BoolFlag{
+						Name:    "yes",
+						Aliases: []string{"y"},
+						Usage:   "Automatically confirm all interactive questions",
 					},
 				},
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 2); err != nil {
@@ -105,7 +97,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return setSignallingAddress(c, snapshotAddress, signature)
+					return setSignallingAddress(snapshotAddress, signature, c.Bool("yes"))
 
 				},
 			},
@@ -116,12 +108,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Usage:     "Clear the node's signalling address",
 				UsageText: "rocketpool pdao clear-signalling-address signalling-address signature",
 				Flags: []cli.Flag{
-					cli.BoolFlag{
-						Name:  "yes, y",
-						Usage: "Automatically confirm all interactive questions",
+					&cli.BoolFlag{
+						Name:    "yes",
+						Aliases: []string{"y"},
+						Usage:   "Automatically confirm all interactive questions",
 					},
 				},
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -129,7 +122,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return clearSignallingAddress(c)
+					return clearSignallingAddress(c.Bool("yes"))
 
 				},
 			},
@@ -140,12 +133,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Usage:     "Set the address you want to use when voting on Rocket Pool on-chain governance proposals, or the address you want to delegate your voting power to.",
 				UsageText: "rocketpool pdao set-voting-delegate address",
 				Flags: []cli.Flag{
-					cli.BoolFlag{
-						Name:  "yes, y",
-						Usage: "Automatically confirm delegate setting",
+					&cli.BoolFlag{
+						Name:    "yes",
+						Aliases: []string{"y"},
+						Usage:   "Automatically confirm delegate setting",
 					},
 				},
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -153,7 +147,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 					delegate := c.Args().Get(0)
 					// Run
-					return pdaoSetVotingDelegate(c, delegate)
+					return pdaoSetVotingDelegate(delegate, c.Bool("yes"))
 
 				},
 			},
@@ -164,16 +158,18 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Usage:     "Unlock any bonded RPL you have for a proposal or set of challenges, and claim any bond rewards for defending or defeating the proposal",
 				UsageText: "rocketpool pdao proposals claim-bonds proposal-id indices",
 				Flags: []cli.Flag{
-					cli.StringFlag{
-						Name:  "proposal, p",
-						Usage: "The ID of the proposal to claim bonds from (or 'all')",
+					&cli.StringFlag{
+						Name:    "proposal",
+						Aliases: []string{"p"},
+						Usage:   "The ID of the proposal to claim bonds from (or 'all')",
 					},
-					cli.BoolFlag{
-						Name:  "yes, y",
-						Usage: "Automatically confirm all interactive questions",
+					&cli.BoolFlag{
+						Name:    "yes",
+						Aliases: []string{"y"},
+						Usage:   "Automatically confirm all interactive questions",
 					},
 				},
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -181,7 +177,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return claimBonds(c)
+					return claimBonds(c.String("proposal"), c.Bool("yes"))
 
 				},
 			},
@@ -190,7 +186,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Name:    "propose",
 				Aliases: []string{"p"},
 				Usage:   "Make a Protocol DAO proposal",
-				Subcommands: []cli.Command{
+				Commands: []*cli.Command{
 
 					{
 						Name:      "rewards-percentages",
@@ -198,28 +194,32 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Usage:     "Propose updating the RPL rewards allocation percentages for node operators, the Oracle DAO, and the Protocol DAO",
 						UsageText: "rocketpool pdao propose rewards-percentages",
 						Flags: []cli.Flag{
-							cli.BoolFlag{
+							&cli.BoolFlag{
 								Name:  "raw",
 								Usage: "Add this flag if you want to use 18-decimal-fixed-point-integer (wei) values instead of floating point percentages",
 							},
-							cli.BoolFlag{
-								Name:  "yes, y",
-								Usage: "Automatically confirm all interactive questions",
+							&cli.BoolFlag{
+								Name:    "yes",
+								Aliases: []string{"y"},
+								Usage:   "Automatically confirm all interactive questions",
 							},
-							cli.StringFlag{
-								Name:  "node, n",
-								Usage: "The node operator's rewards allocation (a percentage from 0 to 1 if '--raw' is not set)",
+							&cli.StringFlag{
+								Name:    "node",
+								Aliases: []string{"n"},
+								Usage:   "The node operator's rewards allocation (a percentage from 0 to 1 if '--raw' is not set)",
 							},
-							cli.StringFlag{
-								Name:  "odao, o",
-								Usage: "The Oracle DAO's rewards allocation (a percentage from 0 to 1 if '--raw' is not set)",
+							&cli.StringFlag{
+								Name:    "odao",
+								Aliases: []string{"o"},
+								Usage:   "The Oracle DAO's rewards allocation (a percentage from 0 to 1 if '--raw' is not set)",
 							},
-							cli.StringFlag{
-								Name:  "pdao, p",
-								Usage: "The Protocol DAO's rewards allocation (a percentage from 0 to 1 if '--raw' is not set)",
+							&cli.StringFlag{
+								Name:    "pdao",
+								Aliases: []string{"p"},
+								Usage:   "The Protocol DAO's rewards allocation (a percentage from 0 to 1 if '--raw' is not set)",
 							},
 						},
-						Action: func(c *cli.Context) error {
+						Action: func(ctx context.Context, c *cli.Command) error {
 
 							// Validate args
 							if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -227,7 +227,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 							}
 
 							// Run
-							return proposeRewardsPercentages(c)
+							return proposeRewardsPercentages(c.Bool("raw"), c.String("node"), c.String("odao"), c.String("pdao"), c.Bool("yes"))
 
 						},
 					},
@@ -238,28 +238,37 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Usage:     "Propose a one-time spend of the Protocol DAO's treasury",
 						UsageText: "rocketpool pdao propose one-time-spend",
 						Flags: []cli.Flag{
-							cli.BoolFlag{
+							&cli.BoolFlag{
 								Name:  "raw",
 								Usage: "Add this flag if you want to use 18-decimal-fixed-point-integer (wei) values instead of floating point ETH amounts",
 							},
-							cli.BoolFlag{
-								Name:  "yes, y",
-								Usage: "Automatically confirm all interactive questions",
+							&cli.BoolFlag{
+								Name:    "yes",
+								Aliases: []string{"y"},
+								Usage:   "Automatically confirm all interactive questions",
 							},
-							cli.StringFlag{
-								Name:  "invoice-id, i",
-								Usage: "The invoice ID / number for this spend",
+							&cli.StringFlag{
+								Name:    "invoice-id",
+								Aliases: []string{"i"},
+								Usage:   "The invoice ID / number for this spend",
 							},
-							cli.StringFlag{
-								Name:  "recipient, r",
-								Usage: "The recipient of the spend",
+							&cli.StringFlag{
+								Name:    "recipient",
+								Aliases: []string{"r"},
+								Usage:   "The recipient of the spend",
 							},
-							cli.StringFlag{
-								Name:  "amount, a",
-								Usage: "The amount of RPL to send",
+							&cli.StringFlag{
+								Name:    "amount",
+								Aliases: []string{"a"},
+								Usage:   "The amount of RPL to send",
+							},
+							&cli.StringFlag{
+								Name:    "custom-message",
+								Aliases: []string{"m"},
+								Usage:   "A custom message for the proposal",
 							},
 						},
-						Action: func(c *cli.Context) error {
+						Action: func(ctx context.Context, c *cli.Command) error {
 
 							// Validate args
 							if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -267,7 +276,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 							}
 
 							// Run
-							return proposeOneTimeSpend(c)
+							return proposeOneTimeSpend(c.String("invoice-id"), c.String("recipient"), c.String("amount"), c.String("custom-message"), c.Bool("raw"), c.Bool("yes"))
 
 						},
 					},
@@ -278,40 +287,52 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Usage:     "Propose a recurring spend of the Protocol DAO's treasury",
 						UsageText: "rocketpool pdao propose recurring-spend",
 						Flags: []cli.Flag{
-							cli.BoolFlag{
+							&cli.BoolFlag{
 								Name:  "raw",
 								Usage: "Add this flag if you want to use 18-decimal-fixed-point-integer (wei) values instead of floating point ETH amounts",
 							},
-							cli.BoolFlag{
-								Name:  "yes, y",
-								Usage: "Automatically confirm all interactive questions",
+							&cli.BoolFlag{
+								Name:    "yes",
+								Aliases: []string{"y"},
+								Usage:   "Automatically confirm all interactive questions",
 							},
-							cli.StringFlag{
-								Name:  "contract-name, c",
-								Usage: "The name of the recurring spend's contract / invoice (alternatively, the name of the recipient)",
+							&cli.StringFlag{
+								Name:    "contract-name",
+								Aliases: []string{"c"},
+								Usage:   "The name of the recurring spend's contract / invoice (alternatively, the name of the recipient)",
 							},
-							cli.StringFlag{
-								Name:  "recipient, r",
-								Usage: "The recipient of the spend",
+							&cli.StringFlag{
+								Name:    "recipient",
+								Aliases: []string{"r"},
+								Usage:   "The recipient of the spend",
 							},
-							cli.StringFlag{
-								Name:  "amount-per-period, a",
-								Usage: "The amount of RPL to send",
+							&cli.StringFlag{
+								Name:    "amount-per-period",
+								Aliases: []string{"a"},
+								Usage:   "The amount of RPL to send",
 							},
-							cli.Uint64Flag{
-								Name:  "start-time, s",
-								Usage: "The start time of the first payment period (Unix timestamp)",
+							&cli.Uint64Flag{
+								Name:    "start-time",
+								Aliases: []string{"s"},
+								Usage:   "The start time of the first payment period (Unix timestamp)",
 							},
-							cli.StringFlag{
-								Name:  "period-length, l",
-								Usage: "The length of time between each payment, in hours / minutes / seconds (e.g., 168h0m0s)",
+							&cli.StringFlag{
+								Name:    "period-length",
+								Aliases: []string{"l"},
+								Usage:   "The length of time between each payment, in hours / minutes / seconds (e.g., 168h0m0s)",
 							},
-							cli.Uint64Flag{
-								Name:  "number-of-periods, n",
-								Usage: "The total number of payment periods for the spend",
+							&cli.Uint64Flag{
+								Name:    "number-of-periods",
+								Aliases: []string{"n"},
+								Usage:   "The total number of payment periods for the spend",
+							},
+							&cli.StringFlag{
+								Name:    "custom-message",
+								Aliases: []string{"m"},
+								Usage:   "A custom message for the proposal",
 							},
 						},
-						Action: func(c *cli.Context) error {
+						Action: func(ctx context.Context, c *cli.Command) error {
 
 							// Validate args
 							if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -319,7 +340,15 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 							}
 
 							// Run
-							return proposeRecurringSpend(c)
+							return proposeRecurringSpend(
+								c.Bool("raw"),
+								c.String("contract-name"),
+								c.String("recipient"),
+								c.String("amount-per-period"),
+								c.Uint64("start-time"),
+								c.String("period-length"),
+								c.Uint64("number-of-periods"),
+								c.String("custom-message"), c.Bool("yes"))
 
 						},
 					},
@@ -330,36 +359,47 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Usage:     "Propose an update to an existing recurring spend plan",
 						UsageText: "rocketpool pdao propose recurring-spend-update",
 						Flags: []cli.Flag{
-							cli.BoolFlag{
+							&cli.BoolFlag{
 								Name:  "raw",
 								Usage: "Add this flag if you want to use 18-decimal-fixed-point-integer (wei) values instead of floating point ETH amounts",
 							},
-							cli.BoolFlag{
-								Name:  "yes, y",
-								Usage: "Automatically confirm all interactive questions",
+							&cli.BoolFlag{
+								Name:    "yes",
+								Aliases: []string{"y"},
+								Usage:   "Automatically confirm all interactive questions",
 							},
-							cli.StringFlag{
-								Name:  "contract-name, c",
-								Usage: "The name of the recurring spend's contract / invoice (alternatively, the name of the recipient)",
+							&cli.StringFlag{
+								Name:    "contract-name",
+								Aliases: []string{"c"},
+								Usage:   "The name of the recurring spend's contract / invoice (alternatively, the name of the recipient)",
 							},
-							cli.StringFlag{
-								Name:  "recipient, r",
-								Usage: "The recipient of the spend",
+							&cli.StringFlag{
+								Name:    "recipient",
+								Aliases: []string{"r"},
+								Usage:   "The recipient of the spend",
 							},
-							cli.StringFlag{
-								Name:  "amount-per-period, a",
-								Usage: "The amount of RPL to send",
+							&cli.StringFlag{
+								Name:    "amount-per-period",
+								Aliases: []string{"a"},
+								Usage:   "The amount of RPL to send",
 							},
-							cli.StringFlag{
-								Name:  "period-length, l",
-								Usage: "The length of time between each payment, in hours / minutes / seconds (e.g., 168h0m0s)",
+							&cli.StringFlag{
+								Name:    "period-length",
+								Aliases: []string{"l"},
+								Usage:   "The length of time between each payment, in hours / minutes / seconds (e.g., 168h0m0s)",
 							},
-							cli.Uint64Flag{
-								Name:  "number-of-periods, n",
-								Usage: "The total number of payment periods for the spend",
+							&cli.Uint64Flag{
+								Name:    "number-of-periods",
+								Aliases: []string{"n"},
+								Usage:   "The total number of payment periods for the spend",
+							},
+							&cli.StringFlag{
+								Name:    "custom-message",
+								Aliases: []string{"m"},
+								Usage:   "A custom message for the proposal",
 							},
 						},
-						Action: func(c *cli.Context) error {
+						Action: func(ctx context.Context, c *cli.Command) error {
 
 							// Validate args
 							if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -367,8 +407,16 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 							}
 
 							// Run
-							return proposeRecurringSpendUpdate(c)
-
+							return proposeRecurringSpendUpdate(
+								c.Bool("raw"),
+								c.String("contract-name"),
+								c.String("recipient"),
+								c.String("amount-per-period"),
+								c.String("period-length"),
+								c.Uint64("number-of-periods"),
+								c.String("custom-message"),
+								c.Bool("yes"),
+							)
 						},
 					},
 
@@ -376,7 +424,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Name:    "security-council",
 						Aliases: []string{"sc"},
 						Usage:   "Modify the security council",
-						Subcommands: []cli.Command{
+						Commands: []*cli.Command{
 
 							{
 								Name:      "invite",
@@ -384,20 +432,23 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 								Usage:     "Propose an invitation to the security council",
 								UsageText: "rocketpool pdao propose security-council invite",
 								Flags: []cli.Flag{
-									cli.BoolFlag{
-										Name:  "yes, y",
-										Usage: "Automatically confirm all interactive questions",
+									&cli.BoolFlag{
+										Name:    "yes",
+										Aliases: []string{"y"},
+										Usage:   "Automatically confirm all interactive questions",
 									},
-									cli.StringFlag{
-										Name:  "id, i",
-										Usage: "A descriptive ID of the entity being invited",
+									&cli.StringFlag{
+										Name:    "id",
+										Aliases: []string{"i"},
+										Usage:   "A descriptive ID of the entity being invited",
 									},
-									cli.StringFlag{
-										Name:  "address, a",
-										Usage: "The address of the entity being invited",
+									&cli.StringFlag{
+										Name:    "address",
+										Aliases: []string{"a"},
+										Usage:   "The address of the entity being invited",
 									},
 								},
-								Action: func(c *cli.Context) error {
+								Action: func(ctx context.Context, c *cli.Command) error {
 
 									// Validate args
 									if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -405,7 +456,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 									}
 
 									// Run
-									return proposeSecurityCouncilInvite(c)
+									return proposeSecurityCouncilInvite(c.String("id"), c.String("address"), c.Bool("yes"))
 
 								},
 							},
@@ -416,16 +467,18 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 								Usage:     "Propose kick a member from the security council",
 								UsageText: "rocketpool pdao propose security-council kick",
 								Flags: []cli.Flag{
-									cli.BoolFlag{
-										Name:  "yes, y",
-										Usage: "Automatically confirm all interactive questions",
+									&cli.BoolFlag{
+										Name:    "yes",
+										Aliases: []string{"y"},
+										Usage:   "Automatically confirm all interactive questions",
 									},
-									cli.StringFlag{
-										Name:  "addresses, a",
-										Usage: "One or more addresses of the entity(s) to kick, separated by commas",
+									&cli.StringFlag{
+										Name:    "addresses",
+										Aliases: []string{"a"},
+										Usage:   "One or more addresses of the entity(s) to kick, separated by commas",
 									},
 								},
-								Action: func(c *cli.Context) error {
+								Action: func(ctx context.Context, c *cli.Command) error {
 
 									// Validate args
 									if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -433,7 +486,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 									}
 
 									// Run
-									return proposeSecurityCouncilKick(c)
+									return proposeSecurityCouncilKick(c.String("addresses"), c.Bool("yes"))
 
 								},
 							},
@@ -444,24 +497,28 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 								Usage:     "Propose replacing an existing member of the security council with a new member",
 								UsageText: "rocketpool pdao propose security-council replace",
 								Flags: []cli.Flag{
-									cli.BoolFlag{
-										Name:  "yes, y",
-										Usage: "Automatically confirm all interactive questions",
+									&cli.BoolFlag{
+										Name:    "yes",
+										Aliases: []string{"y"},
+										Usage:   "Automatically confirm all interactive questions",
 									},
-									cli.StringFlag{
-										Name:  "existing-address, e",
-										Usage: "The address of the existing member",
+									&cli.StringFlag{
+										Name:    "existing-address",
+										Aliases: []string{"e"},
+										Usage:   "The address of the existing member",
 									},
-									cli.StringFlag{
-										Name:  "new-id, ni",
-										Usage: "A descriptive ID of the new entity to invite",
+									&cli.StringFlag{
+										Name:    "new-id",
+										Aliases: []string{"ni"},
+										Usage:   "A descriptive ID of the new entity to invite",
 									},
-									cli.StringFlag{
-										Name:  "new-address, na",
-										Usage: "The address of the new entity to invite",
+									&cli.StringFlag{
+										Name:    "new-address",
+										Aliases: []string{"na"},
+										Usage:   "The address of the new entity to invite",
 									},
 								},
-								Action: func(c *cli.Context) error {
+								Action: func(ctx context.Context, c *cli.Command) error {
 
 									// Validate args
 									if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -469,7 +526,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 									}
 
 									// Run
-									return proposeSecurityCouncilReplace(c)
+									return proposeSecurityCouncilReplace(c.String("existing-address"), c.String("new-id"), c.String("new-address"), c.Bool("yes"))
 
 								},
 							},
@@ -480,13 +537,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Name:    "setting",
 						Aliases: []string{"s"},
 						Usage:   "Make a Protocol DAO setting proposal",
-						Subcommands: []cli.Command{
+						Commands: []*cli.Command{
 
 							{
 								Name:    "auction",
 								Aliases: []string{"a"},
 								Usage:   "Auction settings",
-								Subcommands: []cli.Command{
+								Commands: []*cli.Command{
 
 									{
 										Name:      "is-create-lot-enabled",
@@ -494,12 +551,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.CreateLotEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool pdao propose setting auction is-create-lot-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -511,7 +573,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingAuctionIsCreateLotEnabled(c, value)
+											return proposeSettingAuctionIsCreateLotEnabled(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -522,12 +584,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.BidOnLotEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool pdao propose setting auction is-bid-on-lot-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -539,7 +606,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingAuctionIsBidOnLotEnabled(c, value)
+											return proposeSettingAuctionIsBidOnLotEnabled(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -550,28 +617,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.LotMinimumEthValueSettingPath, floatEthUsage),
 										UsageText: "rocketpool pdao propose setting auction lot-minimum-eth-value value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), false)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), false, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingAuctionLotMinimumEthValue(c, value)
+											return proposeSettingAuctionLotMinimumEthValue(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -582,28 +654,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.LotMaximumEthValueSettingPath, floatEthUsage),
 										UsageText: "rocketpool pdao propose setting auction lot-maximum-eth-value value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), false)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), false, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingAuctionLotMaximumEthValue(c, value)
+											return proposeSettingAuctionLotMaximumEthValue(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -614,12 +691,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.LotDurationSettingPath, durationUsage),
 										UsageText: "rocketpool pdao propose setting auction lot-duration value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -631,7 +713,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingAuctionLotDuration(c, value)
+											return proposeSettingAuctionLotDuration(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -642,28 +724,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.LotStartingPriceRatioSettingPath, percentUsage),
 										UsageText: "rocketpool pdao propose setting auction lot-starting-price-ratio value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), true)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingAuctionLotStartingPriceRatio(c, value)
+											return proposeSettingAuctionLotStartingPriceRatio(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -674,28 +761,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.LotReservePriceRatioSettingPath, percentUsage),
 										UsageText: "rocketpool pdao propose setting auction lot-reserve-price-ratio value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), true)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingAuctionLotReservePriceRatio(c, value)
+											return proposeSettingAuctionLotReservePriceRatio(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -706,7 +798,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 								Name:    "deposit",
 								Aliases: []string{"d"},
 								Usage:   "Deposit pool settings",
-								Subcommands: []cli.Command{
+								Commands: []*cli.Command{
 
 									{
 										Name:      "is-depositing-enabled",
@@ -714,12 +806,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.DepositEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool pdao propose setting deposit is-depositing-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -731,7 +828,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingDepositIsDepositingEnabled(c, value)
+											return proposeSettingDepositIsDepositingEnabled(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -742,12 +839,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.AssignDepositsEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool pdao propose setting deposit are-deposit-assignments-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -759,7 +861,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingDepositAreDepositAssignmentsEnabled(c, value)
+											return proposeSettingDepositAreDepositAssignmentsEnabled(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -770,28 +872,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MinimumDepositSettingPath, floatEthUsage),
 										UsageText: "rocketpool pdao propose setting deposit minimum-deposit value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), false)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), false, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingDepositMinimumDeposit(c, value)
+											return proposeSettingDepositMinimumDeposit(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -802,28 +909,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MaximumDepositPoolSizeSettingPath, floatEthUsage),
 										UsageText: "rocketpool pdao propose setting deposit maximum-deposit-pool-size value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), false)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), false, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingDepositMaximumDepositPoolSize(c, value)
+											return proposeSettingDepositMaximumDepositPoolSize(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -834,12 +946,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MaximumDepositAssignmentsSettingPath, uintUsage),
 										UsageText: "rocketpool pdao propose setting deposit maximum-assignments-per-deposit value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -851,7 +968,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingDepositMaximumAssignmentsPerDeposit(c, value)
+											return proposeSettingDepositMaximumAssignmentsPerDeposit(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -862,12 +979,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MaximumSocializedDepositAssignmentsSettingPath, uintUsage),
 										UsageText: "rocketpool pdao propose setting deposit maximum-socialised-assignments-per-deposit value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -879,7 +1001,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingDepositMaximumSocialisedAssignmentsPerDeposit(c, value)
+											return proposeSettingDepositMaximumSocialisedAssignmentsPerDeposit(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -890,28 +1012,97 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.DepositFeeSettingPath, "specify a percentage between 0 and 0.01 (e.g., '0.001' for 0.10%)"),
 										UsageText: "rocketpool pdao propose setting deposit deposit-fee value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), true)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingDepositDepositFee(c, value)
+											return proposeSettingDepositDepositFee(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "express-queue-rate",
+										Aliases:   []string{"eqr"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.ExpressQueueRatePath, uintUsage),
+										UsageText: "rocketpool pdao propose setting deposit express-queue-rate value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidatePositiveUint("value", c.Args().Get(0))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingDepositExpressQueueRate(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "express-queue-tickets-base-provision",
+										Aliases:   []string{"eqtbp"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.ExpressQueueTicketsBaseProvisionPath, uintUsage),
+										UsageText: "rocketpool pdao propose setting deposit express-queue-tickets-base-provision value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidatePositiveUint("value", c.Args().Get(0))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingDepositExpressQueueTicketsBaseProvision(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -922,7 +1113,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 								Name:    "minipool",
 								Aliases: []string{"m"},
 								Usage:   "Minipool settings",
-								Subcommands: []cli.Command{
+								Commands: []*cli.Command{
 
 									{
 										Name:      "is-submit-withdrawable-enabled",
@@ -930,12 +1121,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MinipoolSubmitWithdrawableEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool pdao propose setting minipool is-submit-withdrawable-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -947,7 +1143,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingMinipoolIsSubmitWithdrawableEnabled(c, value)
+											return proposeSettingMinipoolIsSubmitWithdrawableEnabled(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -958,12 +1154,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MinipoolLaunchTimeoutSettingPath, durationUsage),
 										UsageText: "rocketpool pdao propose setting minipool launch-timeout value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -975,7 +1176,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingMinipoolLaunchTimeout(c, value)
+											return proposeSettingMinipoolLaunchTimeout(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -986,12 +1187,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.BondReductionEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool pdao propose setting minipool is-bond-reduction-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1003,7 +1209,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingMinipoolIsBondReductionEnabled(c, value)
+											return proposeSettingMinipoolIsBondReductionEnabled(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1014,12 +1220,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MaximumMinipoolCountSettingPath, uintUsage),
 										UsageText: "rocketpool pdao propose setting minipool max-count value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1031,7 +1242,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingMinipoolMaximumCount(c, value)
+											return proposeSettingMinipoolMaximumCount(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1042,12 +1253,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MinipoolUserDistributeWindowStartSettingPath, durationUsage),
 										UsageText: "rocketpool pdao propose setting minipool user-distribute-window-start value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1059,7 +1275,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingMinipoolUserDistributeWindowStart(c, value)
+											return proposeSettingMinipoolUserDistributeWindowStart(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1070,12 +1286,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MinipoolUserDistributeWindowLengthSettingPath, durationUsage),
 										UsageText: "rocketpool pdao propose setting minipool user-distribute-window-length value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1087,7 +1308,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingMinipoolUserDistributeWindowLength(c, value)
+											return proposeSettingMinipoolUserDistributeWindowLength(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1098,7 +1319,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 								Name:    "network",
 								Aliases: []string{"ne"},
 								Usage:   "Network settings",
-								Subcommands: []cli.Command{
+								Commands: []*cli.Command{
 
 									{
 										Name:      "oracle-dao-consensus-threshold",
@@ -1106,28 +1327,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NodeConsensusThresholdSettingPath, percentUsage),
 										UsageText: "rocketpool pdao propose setting network oracle-dao-consensus-threshold value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), true)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingNetworkOracleDaoConsensusThreshold(c, value)
+											return proposeSettingNetworkOracleDaoConsensusThreshold(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1138,28 +1364,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NetworkPenaltyThresholdSettingPath, percentUsage),
 										UsageText: "rocketpool pdao propose setting network node-penalty-threshold value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), true)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingNetworkNodePenaltyThreshold(c, value)
+											return proposeSettingNetworkNodePenaltyThreshold(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1170,28 +1401,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NetworkPenaltyPerRateSettingPath, percentUsage),
 										UsageText: "rocketpool pdao propose setting network per-penalty-rate value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), true)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingNetworkPerPenaltyRate(c, value)
+											return proposeSettingNetworkPerPenaltyRate(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1202,12 +1438,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.SubmitBalancesEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool pdao propose setting network is-submit-balances-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1219,7 +1460,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNetworkIsSubmitBalancesEnabled(c, value)
+											return proposeSettingNetworkIsSubmitBalancesEnabled(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1230,12 +1471,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.SubmitBalancesFrequencySettingPath, durationUsage),
 										UsageText: "rocketpool pdao propose setting network submit-balances-frequency value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1247,7 +1493,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNetworkSubmitBalancesFrequency(c, value)
+											return proposeSettingNetworkSubmitBalancesFrequency(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1258,12 +1504,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.SubmitPricesEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool pdao propose setting network is-submit-prices-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1275,7 +1526,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNetworkIsSubmitPricesEnabled(c, value)
+											return proposeSettingNetworkIsSubmitPricesEnabled(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1286,12 +1537,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.SubmitPricesFrequencySettingPath, durationUsage),
 										UsageText: "rocketpool pdao propose setting network submit-prices-frequency value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1303,7 +1559,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNetworkSubmitPricesFrequency(c, value)
+											return proposeSettingNetworkSubmitPricesFrequency(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1314,28 +1570,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MinimumNodeFeeSettingPath, percentUsage),
 										UsageText: "rocketpool pdao propose setting network minimum-node-fee value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), true)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingNetworkMinimumNodeFee(c, value)
+											return proposeSettingNetworkMinimumNodeFee(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1346,28 +1607,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.TargetNodeFeeSettingPath, percentUsage),
 										UsageText: "rocketpool pdao propose setting network target-node-fee value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), true)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingNetworkTargetNodeFee(c, value)
+											return proposeSettingNetworkTargetNodeFee(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1378,28 +1644,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MaximumNodeFeeSettingPath, percentUsage),
 										UsageText: "rocketpool pdao propose setting network maximum-node-fee value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), true)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingNetworkMaximumNodeFee(c, value)
+											return proposeSettingNetworkMaximumNodeFee(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1410,28 +1681,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NodeFeeDemandRangeSettingPath, floatEthUsage),
 										UsageText: "rocketpool pdao propose setting network node-fee-demand-range value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), false)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), false, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingNetworkNodeFeeDemandRange(c, value)
+											return proposeSettingNetworkNodeFeeDemandRange(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1442,28 +1718,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.TargetRethCollateralRateSettingPath, percentUsage),
 										UsageText: "rocketpool pdao propose setting network target-reth-collateral-rate value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), true)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingNetworkTargetRethCollateralRate(c, value)
+											return proposeSettingNetworkTargetRethCollateralRate(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1474,12 +1755,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.SubmitRewardsEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool pdao propose setting network is-submit-rewards-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1491,7 +1777,261 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNetworkIsSubmitRewardsEnabled(c, value)
+											return proposeSettingNetworkIsSubmitRewardsEnabled(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "allow-listed-controllers",
+										Aliases:   []string{"alc"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting", protocol.NetworkAllowListedControllersPath),
+										UsageText: "rocketpool pdao propose setting network allow-listed-controllers",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+											&cli.StringFlag{
+												Name:  "addressList, a",
+												Usage: "One or more addresses, separated by commas with no spaces",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 0); err != nil {
+												return err
+											}
+											// Run
+											return setAllowListedControllers(c.String("addressList"), c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "node-commission-share",
+										Aliases:   []string{"ncs"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NetworkNodeCommissionSharePath, percentUsage),
+										UsageText: "rocketpool pdao propose setting node node-commission-share value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:  "raw",
+												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
+											},
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingNodeCommissionShare(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "node-commission-share-council-adder",
+										Aliases:   []string{"ncsca"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NetworkNodeCommissionShareSecurityCouncilAdderPath, percentUsage),
+										UsageText: "rocketpool pdao propose setting node node-commission-share-council-adder value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:  "raw",
+												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
+											},
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingNodeCommissionShareSecurityCouncilAdder(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "voter-share",
+										Aliases:   []string{"vs"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NetworkVoterSharePath, percentUsage),
+										UsageText: "rocketpool pdao propose setting node voter-share value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:  "raw",
+												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
+											},
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingVoterShare(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "pdao-share",
+										Aliases:   []string{"ps"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NetworkPDAOSharePath, percentUsage),
+										UsageText: "rocketpool pdao propose setting node pdao-share value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:  "raw",
+												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
+											},
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingPDAOShare(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "max-node-share-security-council-adder",
+										Aliases:   []string{"mns"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NetworkMaxNodeShareSecurityCouncilAdderPath, percentUsage),
+										UsageText: "rocketpool pdao propose setting node max-node-share-security-council-adder value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:  "raw",
+												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
+											},
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeMaxNodeShareSecurityCouncilAdder(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "max-reth-balance-delta",
+										Aliases:   []string{"mrb"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NetworkMaxRethBalanceDeltaPath, percentUsage),
+										UsageText: "rocketpool pdao propose setting node max-reth-balance-delta value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:  "raw",
+												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
+											},
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeMaxRethBalanceDelta(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1502,7 +2042,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 								Name:    "node",
 								Aliases: []string{"no"},
 								Usage:   "Node settings",
-								Subcommands: []cli.Command{
+								Commands: []*cli.Command{
 
 									{
 										Name:      "is-registration-enabled",
@@ -1510,12 +2050,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NodeRegistrationEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool pdao propose setting node is-registration-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1527,7 +2072,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNodeIsRegistrationEnabled(c, value)
+											return proposeSettingNodeIsRegistrationEnabled(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1538,12 +2083,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.SmoothingPoolRegistrationEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool pdao propose setting node is-smoothing-pool-registration-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1555,7 +2105,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNodeIsSmoothingPoolRegistrationEnabled(c, value)
+											return proposeSettingNodeIsSmoothingPoolRegistrationEnabled(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1566,12 +2116,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NodeDepositEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool pdao propose setting node is-depositing-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1583,7 +2138,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNodeIsDepositingEnabled(c, value)
+											return proposeSettingNodeIsDepositingEnabled(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1594,12 +2149,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.VacantMinipoolsEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool pdao propose setting node are-vacant-minipools-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1611,71 +2171,114 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNodeAreVacantMinipoolsEnabled(c, value)
+											return proposeSettingNodeAreVacantMinipoolsEnabled(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
 
 									{
-										Name:      "minimum-per-minipool-stake",
-										Aliases:   []string{"minpms"},
-										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MinimumPerMinipoolStakeSettingPath, unboundedPercentUsage),
-										UsageText: "rocketpool pdao propose setting node minimum-per-minipool-stake value",
+										Name:      "minimum-legacy-staked-rpl",
+										Aliases:   []string{"mlsr"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MinimumLegacyRplStakePath, unboundedPercentUsage),
+										UsageText: "rocketpool pdao propose setting node minimum-legacy-staked-rpl value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), false)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), false, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingNodeMinimumPerMinipoolStake(c, value)
+											return proposeSettingNodeMinimumLegacyRplStake(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
 
 									{
-										Name:      "maximum-per-minipool-stake",
-										Aliases:   []string{"maxpms"},
-										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MaximumPerMinipoolStakeSettingPath, unboundedPercentUsage),
-										UsageText: "rocketpool pdao propose setting node maximum-per-minipool-stake value",
+										Name:      "reduced-bond",
+										Aliases:   []string{"rb"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.ReducedBondSettingPath, floatEthUsage),
+										UsageText: "rocketpool pdao propose setting node reduced-bond value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), false)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), false, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingNodeMaximumPerMinipoolStake(c, value)
+											return proposeSettingReducedBond(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "node-unstaking-period",
+										Aliases:   []string{"nup"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NodeUnstakingPeriodSettingPath, durationUsage),
+										UsageText: "rocketpool pdao propose setting node node-unstaking-period value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidateDuration("value", c.Args().Get(0))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingNodeUnstakingPeriod(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1686,7 +2289,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 								Name:    "proposals",
 								Aliases: []string{"p"},
 								Usage:   "Proposal settings",
-								Subcommands: []cli.Command{
+								Commands: []*cli.Command{
 
 									{
 										Name:      "vote-phase1-time",
@@ -1694,12 +2297,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.VotePhase1TimeSettingPath, durationUsage),
 										UsageText: "rocketpool pdao propose setting proposals vote-phase1-time value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1711,7 +2319,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingProposalsVotePhase1Time(c, value)
+											return proposeSettingProposalsVotePhase1Time(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1722,12 +2330,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.VotePhase2TimeSettingPath, durationUsage),
 										UsageText: "rocketpool pdao propose setting proposals vote-phase2-time value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1739,7 +2352,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingProposalsVotePhase2Time(c, value)
+											return proposeSettingProposalsVotePhase2Time(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1750,12 +2363,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.VoteDelayTimeSettingPath, durationUsage),
 										UsageText: "rocketpool pdao propose setting proposals vote-delay-time value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1767,7 +2385,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingProposalsVoteDelayTime(c, value)
+											return proposeSettingProposalsVoteDelayTime(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1778,12 +2396,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.ExecuteTimeSettingPath, durationUsage),
 										UsageText: "rocketpool pdao propose setting proposals execute-time value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1795,7 +2418,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingProposalsExecuteTime(c, value)
+											return proposeSettingProposalsExecuteTime(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1806,28 +2429,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.ProposalBondSettingPath, floatRplUsage),
 										UsageText: "rocketpool pdao propose setting proposals proposal-bond value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), false)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), false, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingProposalsProposalBond(c, value)
+											return proposeSettingProposalsProposalBond(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1838,28 +2466,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.ChallengeBondSettingPath, floatRplUsage),
 										UsageText: "rocketpool pdao propose setting proposals challenge-bond value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), false)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), false, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingProposalsChallengeBond(c, value)
+											return proposeSettingProposalsChallengeBond(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1870,12 +2503,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.ChallengePeriodSettingPath, durationUsage),
 										UsageText: "rocketpool pdao propose setting proposals challenge-period value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1887,7 +2525,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingProposalsChallengePeriod(c, value)
+											return proposeSettingProposalsChallengePeriod(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1898,28 +2536,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.ProposalQuorumSettingPath, percentUsage),
 										UsageText: "rocketpool pdao propose setting proposals quorum value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), true)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingProposalsQuorum(c, value)
+											return proposeSettingProposalsQuorum(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1930,28 +2573,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.ProposalVetoQuorumSettingPath, percentUsage),
 										UsageText: "rocketpool pdao propose setting proposals veto-quorum value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), true)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingProposalsVetoQuorum(c, value)
+											return proposeSettingProposalsVetoQuorum(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1962,12 +2610,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.ProposalMaxBlockAgeSettingPath, blockCountUsage),
 										UsageText: "rocketpool pdao propose setting proposals max-block-age value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -1979,7 +2632,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingProposalsMaxBlockAge(c, value)
+											return proposeSettingProposalsMaxBlockAge(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -1990,7 +2643,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 								Name:    "rewards",
 								Aliases: []string{"r"},
 								Usage:   "Rewards settings",
-								Subcommands: []cli.Command{
+								Commands: []*cli.Command{
 
 									{
 										Name:      "interval-periods",
@@ -1998,12 +2651,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting - the rewards interval will consist of this number of price/balances submission periods; %s", protocol.RewardsClaimIntervalPeriodsSettingPath, uintUsage),
 										UsageText: "rocketpool pdao propose setting rewards interval-periods value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -2015,7 +2673,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingRewardsIntervalPeriods(c, value)
+											return proposeSettingRewardsIntervalPeriods(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -2026,7 +2684,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 								Name:    "security",
 								Aliases: []string{"s"},
 								Usage:   "Security council settings",
-								Subcommands: []cli.Command{
+								Commands: []*cli.Command{
 
 									{
 										Name:      "members-quorum",
@@ -2034,28 +2692,33 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.SecurityMembersQuorumSettingPath, percentUsage),
 										UsageText: "rocketpool pdao propose setting security members-quorum value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
+											&cli.BoolFlag{
 												Name:  "raw",
 												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
 											},
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
 												return err
 											}
-											value, err := parseFloat(c, "value", c.Args().Get(0), true)
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
 											if err != nil {
 												return err
 											}
 
 											// Run
-											return proposeSettingSecurityMembersQuorum(c, value)
+											return proposeSettingSecurityMembersQuorum(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -2066,12 +2729,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.SecurityMembersLeaveTimeSettingPath, durationUsage),
 										UsageText: "rocketpool pdao propose setting security members-leave-time value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -2083,7 +2751,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingSecurityMembersLeaveTime(c, value)
+											return proposeSettingSecurityMembersLeaveTime(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -2094,12 +2762,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.SecurityProposalVoteTimeSettingPath, durationUsage),
 										UsageText: "rocketpool pdao propose setting security proposal-vote-phase1-time value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -2111,7 +2784,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingSecurityProposalVoteTime(c, value)
+											return proposeSettingSecurityProposalVoteTime(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -2122,12 +2795,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.SecurityProposalExecuteTimeSettingPath, durationUsage),
 										UsageText: "rocketpool pdao propose setting security proposal-execute-time value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -2139,7 +2817,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingSecurityProposalExecuteTime(c, value)
+											return proposeSettingSecurityProposalExecuteTime(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
@@ -2150,12 +2828,17 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.SecurityProposalActionTimeSettingPath, durationUsage),
 										UsageText: "rocketpool pdao propose setting security proposal-action-time value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -2167,12 +2850,329 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingSecurityProposalActionTime(c, value)
+											return proposeSettingSecurityProposalActionTime(value, c.Bool("yes"), c.String("to-json"))
 
 										},
 									},
 								},
 							},
+
+							{
+								Name:    "megapool",
+								Aliases: []string{"g"},
+								Usage:   "Megapool settings",
+								Commands: []*cli.Command{
+
+									{
+										Name:      "time-before-dissolve",
+										Aliases:   []string{"tbd"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MegapoolTimeBeforeDissolveSettingsPath, durationUsage),
+										UsageText: "rocketpool pdao propose setting megapool time-before-dissolve value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidateDuration("value", c.Args().Get(0))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingMegapoolTimeBeforeDissolve(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "maximum-megapool-eth-penalty",
+										Aliases:   []string{"mmep"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MegapoolMaximumMegapoolEthPenaltyPath, floatEthUsage),
+										UsageText: "rocketpool pdao propose setting megapool maximum-megapool-eth-penalty value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:  "raw",
+												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
+											},
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), false, c.Bool("yes"))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingMaximumMegapoolEthPenalty(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "notify-threshold",
+										Aliases:   []string{"nt"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MegapoolNotifyThresholdPath, epochCountUsage),
+										UsageText: "rocketpool pdao propose setting megapool notify-threshold",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidatePositiveUint("value", c.Args().Get(0))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingMegapoolNotifyThreshold(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "late-notify-fine",
+										Aliases:   []string{"lnf"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MegapoolLateNotifyFinePath, floatEthUsage),
+										UsageText: "rocketpool pdao propose setting megapool late-notify-fine value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:  "raw",
+												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
+											},
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), false, c.Bool("yes"))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingMegapoolLateNotifyFine(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "dissolve-penalty",
+										Aliases:   []string{"dp"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MegapoolDissolvePenaltyPath, floatEthUsage),
+										UsageText: "rocketpool pdao propose setting megapool dissolve-penalty value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), false, c.Bool("yes"))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingMegapoolDissolvePenalty(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "user-distribute-delay",
+										Aliases:   []string{"udd"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MegapoolUserDistributeDelayPath, epochCountUsage),
+										UsageText: "rocketpool pdao propose setting megapool user-distribute-delay value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidatePositiveUint("value", c.Args().Get(0))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingMegapoolUserDistributeDelay(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "user-distribute-delay-with-shortfall",
+										Aliases:   []string{"uddws"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MegapoolUserDistributeDelayShortfallPath, epochCountUsage),
+										UsageText: "rocketpool pdao propose setting megapool user-distribute-delay-with-shortfall value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidatePositiveUint("value", c.Args().Get(0))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingMegapoolUserDistributeDelayWithShortfall(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+
+									{
+										Name:      "penalty-threshold",
+										Aliases:   []string{"pt"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MegapoolPenaltyThreshold, percentUsage),
+										UsageText: "rocketpool pdao propose setting proposals penalty-threshold value",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:  "raw",
+												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
+											},
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+											&cli.StringFlag{
+												Name:  "to-json",
+												Usage: "Write this setting to a JSON file instead of submitting a proposal (creates the file or appends to it)",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingPenaltyThreshold(value, c.Bool("yes"), c.String("to-json"))
+
+										},
+									},
+								},
+							},
+						},
+					},
+
+					{
+						Name:      "submit-batch",
+						Aliases:   []string{"sb"},
+						Usage:     "Submit a single proposal that changes multiple Protocol DAO settings from a JSON file created with --to-json",
+						UsageText: "rocketpool pdao propose submit-batch",
+						Flags: []cli.Flag{
+							&cli.BoolFlag{
+								Name:    "yes",
+								Aliases: []string{"y"},
+								Usage:   "Automatically confirm all interactive questions",
+							},
+							&cli.StringFlag{
+								Name:    "file",
+								Aliases: []string{"f"},
+								Usage:   "The JSON file of setting changes created with --to-json. If omitted, you will be prompted.",
+							},
+							&cli.StringFlag{
+								Name:    "message",
+								Aliases: []string{"m"},
+								Usage:   "A custom proposal message (no blank spaces). If omitted, you will be prompted.",
+							},
+						},
+						Action: func(ctx context.Context, c *cli.Command) error {
+
+							// Validate args
+							if err := cliutils.ValidateArgCount(c, 0); err != nil {
+								return err
+							}
+
+							// Run
+							return submitBatch(c.String("file"), c.String("message"), c.Bool("yes"))
+
 						},
 					},
 				},
@@ -2182,7 +3182,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Name:    "proposals",
 				Aliases: []string{"o"},
 				Usage:   "Manage Protocol DAO proposals",
-				Subcommands: []cli.Command{
+				Commands: []*cli.Command{
 
 					{
 						Name:      "list",
@@ -2190,13 +3190,14 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Usage:     "List the Protocol DAO proposals",
 						UsageText: "rocketpool pdao proposals list",
 						Flags: []cli.Flag{
-							cli.StringFlag{
-								Name:  "states, s",
-								Usage: "Comma separated list of states to filter ('pending', 'active', 'succeeded', 'executed', 'cancelled', 'defeated', or 'expired')",
-								Value: "",
+							&cli.StringFlag{
+								Name:    "states",
+								Aliases: []string{"s"},
+								Usage:   "Comma separated list of states to filter ('pending', 'active', 'succeeded', 'executed', 'cancelled', 'defeated', or 'expired')",
+								Value:   "",
 							},
 						},
-						Action: func(c *cli.Context) error {
+						Action: func(ctx context.Context, c *cli.Command) error {
 
 							// Validate args
 							if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -2204,7 +3205,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 							}
 
 							// Run
-							return getProposals(c, c.String("states"))
+							return getProposals(c.String("states"))
 
 						},
 					},
@@ -2214,7 +3215,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Aliases:   []string{"d"},
 						Usage:     "View proposal details",
 						UsageText: "rocketpool pdao proposals details proposal-id",
-						Action: func(c *cli.Context) error {
+						Action: func(ctx context.Context, c *cli.Command) error {
 
 							// Validate args
 							var err error
@@ -2227,7 +3228,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 							}
 
 							// Run
-							return getProposal(c, id)
+							return getProposal(id)
 
 						},
 					},
@@ -2238,20 +3239,23 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Usage:     "Vote on a proposal",
 						UsageText: "rocketpool pdao proposals vote",
 						Flags: []cli.Flag{
-							cli.StringFlag{
-								Name:  "proposal, p",
-								Usage: "The ID of the proposal to vote on",
+							&cli.StringFlag{
+								Name:    "proposal",
+								Aliases: []string{"p"},
+								Usage:   "The ID of the proposal to vote on",
 							},
-							cli.StringFlag{
-								Name:  "vote-direction, v",
-								Usage: "How to vote ('abstain', 'for', 'against', 'veto')",
+							&cli.StringFlag{
+								Name:    "vote-direction",
+								Aliases: []string{"v"},
+								Usage:   "How to vote ('abstain', 'for', 'against', 'veto')",
 							},
-							cli.BoolFlag{
-								Name:  "yes, y",
-								Usage: "Automatically confirm all interactive questions",
+							&cli.BoolFlag{
+								Name:    "yes",
+								Aliases: []string{"y"},
+								Usage:   "Automatically confirm all interactive questions",
 							},
 						},
-						Action: func(c *cli.Context) error {
+						Action: func(ctx context.Context, c *cli.Command) error {
 
 							// Validate args
 							if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -2259,7 +3263,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 							}
 
 							// Run
-							return voteOnProposal(c)
+							return voteOnProposal(c.String("proposal"), c.String("vote-direction"), c.Bool("yes"))
 
 						},
 					},
@@ -2269,16 +3273,18 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Usage:     "Execute a proposal",
 						UsageText: "rocketpool pdao proposals execute",
 						Flags: []cli.Flag{
-							cli.StringFlag{
-								Name:  "proposal, p",
-								Usage: "The ID of the proposal to execute (or 'all')",
+							&cli.StringFlag{
+								Name:    "proposal",
+								Aliases: []string{"p"},
+								Usage:   "The ID of the proposal to execute (or 'all')",
 							},
-							cli.BoolFlag{
-								Name:  "yes, y",
-								Usage: "Automatically confirm all interactive questions",
+							&cli.BoolFlag{
+								Name:    "yes",
+								Aliases: []string{"y"},
+								Usage:   "Automatically confirm all interactive questions",
 							},
 						},
-						Action: func(c *cli.Context) error {
+						Action: func(ctx context.Context, c *cli.Command) error {
 
 							// Validate args
 							if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -2293,7 +3299,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 							}
 
 							// Run
-							return executeProposal(c)
+							return executeProposal(c.String("proposal"), c.Bool("yes"))
 
 						},
 					},
@@ -2304,12 +3310,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Usage:     "Defeat a proposal that still has a tree index in the 'Challenged' state after its challenge window has passed",
 						UsageText: "rocketpool pdao proposals defeat proposal-id challenged-index",
 						Flags: []cli.Flag{
-							cli.BoolFlag{
-								Name:  "yes, y",
-								Usage: "Automatically confirm all interactive questions",
+							&cli.BoolFlag{
+								Name:    "yes",
+								Aliases: []string{"y"},
+								Usage:   "Automatically confirm all interactive questions",
 							},
 						},
-						Action: func(c *cli.Context) error {
+						Action: func(ctx context.Context, c *cli.Command) error {
 
 							// Validate args
 							if err := cliutils.ValidateArgCount(c, 2); err != nil {
@@ -2325,7 +3332,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 							}
 
 							// Run
-							return defeatProposal(c, proposalId, index)
+							return defeatProposal(proposalId, index, c.Bool("yes"))
 
 						},
 					},
@@ -2336,12 +3343,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Usage:     "Finalize a proposal that has been vetoed by burning the proposer's locked RPL bond",
 						UsageText: "rocketpool pdao proposals finalize proposal-id",
 						Flags: []cli.Flag{
-							cli.BoolFlag{
-								Name:  "yes, y",
-								Usage: "Automatically confirm all interactive questions",
+							&cli.BoolFlag{
+								Name:    "yes",
+								Aliases: []string{"y"},
+								Usage:   "Automatically confirm all interactive questions",
 							},
 						},
-						Action: func(c *cli.Context) error {
+						Action: func(ctx context.Context, c *cli.Command) error {
 
 							// Validate args
 							if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -2353,7 +3361,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 							}
 
 							// Run
-							return finalizeProposal(c, proposalId)
+							return finalizeProposal(proposalId, c.Bool("yes"))
 
 						},
 					},

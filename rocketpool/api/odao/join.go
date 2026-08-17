@@ -1,23 +1,23 @@
 package odao
 
 import (
-	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	tndao "github.com/rocket-pool/rocketpool-go/dao/trustednode"
-	tnsettings "github.com/rocket-pool/rocketpool-go/settings/trustednode"
-	"github.com/rocket-pool/rocketpool-go/tokens"
-	"github.com/rocket-pool/rocketpool-go/utils"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+
+	tndao "github.com/rocket-pool/smartnode/bindings/dao/trustednode"
+	tnsettings "github.com/rocket-pool/smartnode/bindings/settings/trustednode"
+	"github.com/rocket-pool/smartnode/bindings/tokens"
+	"github.com/rocket-pool/smartnode/bindings/utils"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canJoin(c *cli.Context) (*api.CanJoinTNDAOResponse, error) {
+func canJoin(c *cli.Command) (*api.CanJoinTNDAOResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
@@ -92,14 +92,14 @@ func canJoin(c *cli.Context) (*api.CanJoinTNDAOResponse, error) {
 		if err != nil {
 			return err
 		}
-		approveGasInfo, err := tokens.EstimateApproveRPLGas(rp, *rocketDAONodeTrustedActionsAddress, rplBondAmount, opts)
+		approveGasLimits, err := tokens.EstimateApproveRPLGas(rp, *rocketDAONodeTrustedActionsAddress, rplBondAmount, opts)
 		if err != nil {
 			return err
 		}
 		//joinGasInfo, err := tndao.EstimateJoinGas(rp, opts)
 		if err == nil {
-			response.GasInfo = approveGasInfo
-			//response.GasInfo.EstGasLimit += joinGasInfo.EstGasLimit
+			response.GasLimits = approveGasLimits
+			//response.GasLimits.EstGasLimit += joinGasInfo.EstGasLimit
 		}
 		return err
 	})
@@ -113,19 +113,15 @@ func canJoin(c *cli.Context) (*api.CanJoinTNDAOResponse, error) {
 	response.InsufficientRplBalance = (nodeRplBalance.Cmp(rplBondAmount) < 0)
 
 	// Update & return response
-	response.CanJoin = !(response.ProposalExpired || response.AlreadyMember || response.InsufficientRplBalance)
+	response.CanJoin = !response.ProposalExpired && !response.AlreadyMember && !response.InsufficientRplBalance
 	return &response, nil
 
 }
 
-func approveRpl(c *cli.Context) (*api.JoinTNDAOApproveResponse, error) {
+func approveRpl(c *cli.Command, opts *bind.TransactOpts) (*api.JoinTNDAOApproveResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -161,14 +157,6 @@ func approveRpl(c *cli.Context) (*api.JoinTNDAOApproveResponse, error) {
 	}
 
 	// Approve RPL allowance
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 	hash, err := tokens.ApproveRPL(rp, *rocketDAONodeTrustedActionsAddress, rplBondAmount, opts)
 	if err != nil {
 		return nil, err
@@ -181,14 +169,10 @@ func approveRpl(c *cli.Context) (*api.JoinTNDAOApproveResponse, error) {
 
 }
 
-func waitForApprovalAndJoin(c *cli.Context, hash common.Hash) (*api.JoinTNDAOJoinResponse, error) {
+func waitForApprovalAndJoin(c *cli.Command, hash common.Hash, opts *bind.TransactOpts) (*api.JoinTNDAOJoinResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -206,14 +190,6 @@ func waitForApprovalAndJoin(c *cli.Context, hash common.Hash) (*api.JoinTNDAOJoi
 	response := api.JoinTNDAOJoinResponse{}
 
 	// Join
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 	joinHash, err := tndao.Join(rp, opts)
 	if err != nil {
 		return nil, err

@@ -3,61 +3,59 @@ package rocketpool
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"math/big"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fatih/color"
 	"github.com/goccy/go-json"
-	"github.com/urfave/cli"
-	"golang.org/x/crypto/ssh"
 
 	"github.com/alessio/shellescape"
 	"github.com/blang/semver/v4"
 	"github.com/mitchellh/go-homedir"
+
 	"github.com/rocket-pool/smartnode/addons/graffiti_wall_writer"
+	clicolor "github.com/rocket-pool/smartnode/rocketpool-cli/cli/color"
 	"github.com/rocket-pool/smartnode/shared/services/config"
+	"github.com/rocket-pool/smartnode/shared/services/rocketpool/assets"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool/template"
 	"github.com/rocket-pool/smartnode/shared/types/api"
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
-	"github.com/rocket-pool/smartnode/shared/utils/rp"
 )
 
 // Config
 const (
-	InstallerURL     string = "https://github.com/rocket-pool/smartnode-install/releases/download/%s/install.sh"
-	UpdateTrackerURL string = "https://github.com/rocket-pool/smartnode-install/releases/download/%s/install-update-tracker.sh"
-
 	SettingsFile             string = "user-settings.yml"
 	BackupSettingsFile       string = "user-settings-backup.yml"
 	PrometheusConfigTemplate string = "prometheus.tmpl"
 	PrometheusFile           string = "prometheus.yml"
 
-	APIContainerSuffix string = "_api"
-	APIBinPath         string = "/go/bin/rocketpool"
+	templatesDir    string = "templates"
+	overrideDir     string = "override"
+	runtimeDir      string = "runtime"
+	upgradeFlagFile string = ".firstrun"
 
-	templatesDir                  string = "templates"
-	overrideDir                   string = "override"
-	runtimeDir                    string = "runtime"
-	defaultFeeRecipientFile       string = "fr-default.tmpl"
-	defaultNativeFeeRecipientFile string = "fr-default-env.tmpl"
-
-	templateSuffix    string = ".tmpl"
-	composeFileSuffix string = ".yml"
-
-	nethermindAdminUrl string = "http://127.0.0.1:7434"
+	nethermindAdminUrl          string = "http://127.0.0.1:7434"
+	pruneStarterContainerSuffix string = "_nm_prune_starter"
 
 	DebugColor = color.FgYellow
 )
+
+var Defaults Globals
 
 // When printing sync percents, we should avoid printing 100%.
 // This function is only called if we're still syncing,
@@ -66,21 +64,24 @@ func SyncRatioToPercent(in float64) float64 {
 	return math.Min(99.99, in*100)
 }
 
+type Globals struct {
+	ConfigPath  string
+	DaemonPath  string
+	MaxFee      float64
+	MaxPrioFee  float64
+	GasLimit    uint64
+	DebugPrint  bool
+	CustomNonce *big.Int
+}
+
 // Rocket Pool client
 type Client struct {
-	configPath         string
-	daemonPath         string
-	maxFee             float64
-	maxPrioFee         float64
-	gasLimit           uint64
-	customNonce        *big.Int
-	client             *ssh.Client
-	originalMaxFee     float64
-	originalMaxPrioFee float64
-	originalGasLimit   uint64
-	debugPrint         bool
-	ignoreSyncCheck    bool
-	forceFallbacks     bool
+	globals Globals
+
+	// apiURL is the base URL for the node's HTTP API server.
+	// It is derived lazily from config on first use.
+	apiURL     string
+	apiURLOnce sync.Once
 }
 
 func getClientStatusString(clientStatus api.ClientStatus) string {
@@ -109,7 +110,6 @@ func checkClientStatus(rp *Client) (bool, error) {
 
 	// Primary EC and CC are good
 	if ecMgrStatus.PrimaryClientStatus.IsSynced && bcMgrStatus.PrimaryClientStatus.IsSynced {
-		rp.SetClientStatusFlags(true, false)
 		return true, nil
 	}
 
@@ -124,8 +124,10 @@ func checkClientStatus(rp *Client) (bool, error) {
 
 		// Fallback EC and CC are good
 		if ecMgrStatus.FallbackClientStatus.IsSynced && bcMgrStatus.FallbackClientStatus.IsSynced {
-			fmt.Printf("%sNOTE: primary clients are not ready, using fallback clients...\n\tPrimary EC status: %s\n\tPrimary CC status: %s%s\n\n", colorYellow, primaryEcStatus, primaryBcStatus, colorReset)
-			rp.SetClientStatusFlags(true, true)
+			clicolor.YellowPrintln("NOTE: primary clients are not ready, using fallback clients...")
+			clicolor.YellowPrintf("\tPrimary EC status: %s\n", primaryEcStatus)
+			clicolor.YellowPrintf("\tPrimary CC status: %s\n", primaryBcStatus)
+			fmt.Println()
 			return true, nil
 		}
 
@@ -139,28 +141,18 @@ func checkClientStatus(rp *Client) (bool, error) {
 	return false, nil
 }
 
+func SetDefaults(g Globals) {
+	Defaults = g
+}
+
 // Create new Rocket Pool client from CLI context without checking for sync status
 // Only use this function from commands that may work if the Daemon service doesn't exist
-// Most users should call NewClientFromCtx(c).WithStatus() or NewClientFromCtx(c).WithReady()
-func NewClientFromCtx(c *cli.Context) *Client {
+// Most users should call NewClient().WithStatus() or NewClient().WithReady()
+func NewClient() *Client {
 
 	// Return client
 	client := &Client{
-		configPath:         os.ExpandEnv(c.GlobalString("config-path")),
-		daemonPath:         os.ExpandEnv(c.GlobalString("daemon-path")),
-		maxFee:             c.GlobalFloat64("maxFee"),
-		maxPrioFee:         c.GlobalFloat64("maxPrioFee"),
-		gasLimit:           c.GlobalUint64("gasLimit"),
-		originalMaxFee:     c.GlobalFloat64("maxFee"),
-		originalMaxPrioFee: c.GlobalFloat64("maxPrioFee"),
-		originalGasLimit:   c.GlobalUint64("gasLimit"),
-		debugPrint:         c.GlobalBool("debug"),
-		forceFallbacks:     false,
-		ignoreSyncCheck:    false,
-	}
-
-	if nonce, ok := c.App.Metadata["nonce"]; ok {
-		client.customNonce = nonce.(*big.Int)
+		globals: Defaults,
 	}
 
 	return client
@@ -194,33 +186,23 @@ func (c *Client) WithReady() (*Client, error) {
 	return c, nil
 }
 
-// Close client remote connection
-func (c *Client) Close() {
-	if c == nil {
-		return
-	}
-
-	if c.client == nil {
-		return
-	}
-
-	_ = c.client.Close()
-}
+// Close is a no-op retained for interface compatibility.
+func (c *Client) Close() {}
 
 func (c *Client) ConfigPath() string {
-	return c.configPath
+	return c.globals.ConfigPath
 }
 
 // Load the config
 // Returns the RocketPoolConfig and whether or not it was newly generated
 func (c *Client) LoadConfig() (*config.RocketPoolConfig, bool, error) {
-	settingsFilePath := filepath.Join(c.configPath, SettingsFile)
+	settingsFilePath := filepath.Join(c.ConfigPath(), SettingsFile)
 	expandedPath, err := homedir.Expand(settingsFilePath)
 	if err != nil {
 		return nil, false, fmt.Errorf("error expanding settings file path: %w", err)
 	}
 
-	cfg, err := rp.LoadConfigFromFile(expandedPath)
+	cfg, err := config.LoadFromFile(expandedPath)
 	if err != nil {
 		return nil, false, err
 	}
@@ -231,55 +213,84 @@ func (c *Client) LoadConfig() (*config.RocketPoolConfig, bool, error) {
 	}
 
 	// Config wasn't loaded, but there was no error- we should create one.
-	return config.NewRocketPoolConfig(c.configPath, c.daemonPath != ""), true, nil
+	return config.NewRocketPoolConfig(c.ConfigPath(), c.globals.DaemonPath != ""), true, nil
 }
 
 // Load the backup config
 func (c *Client) LoadBackupConfig() (*config.RocketPoolConfig, error) {
-	settingsFilePath := filepath.Join(c.configPath, BackupSettingsFile)
+	settingsFilePath := filepath.Join(c.ConfigPath(), BackupSettingsFile)
 	expandedPath, err := homedir.Expand(settingsFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("error expanding backup settings file path: %w", err)
 	}
 
-	return rp.LoadConfigFromFile(expandedPath)
+	return config.LoadFromFile(expandedPath)
 }
 
 // Save the config
 func (c *Client) SaveConfig(cfg *config.RocketPoolConfig) error {
-	settingsFileDirectoryPath, err := homedir.Expand(c.configPath)
+	settingsFileDirectoryPath, err := homedir.Expand(c.ConfigPath())
 	if err != nil {
 		return err
 	}
-	return rp.SaveConfig(cfg, settingsFileDirectoryPath, SettingsFile)
+	return cfg.Save(settingsFileDirectoryPath, SettingsFile)
+}
+
+// Remove the upgrade flag file
+func removeUpgradeFlagFile(configDir string) error {
+
+	// Check for the upgrade flag file
+	upgradeFilePath := filepath.Join(configDir, upgradeFlagFile)
+	_, err := os.Stat(upgradeFilePath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+
+	// Delete the upgrade flag file
+	err = os.Remove(upgradeFilePath)
+	if err != nil {
+		return fmt.Errorf("error removing upgrade flag file: %w", err)
+	}
+
+	return nil
+
 }
 
 // Remove the upgrade flag file
 func (c *Client) RemoveUpgradeFlagFile() error {
-	expandedPath, err := homedir.Expand(c.configPath)
+	expandedPath, err := homedir.Expand(c.ConfigPath())
 	if err != nil {
 		return err
 	}
-	return rp.RemoveUpgradeFlagFile(expandedPath)
+	return removeUpgradeFlagFile(expandedPath)
+}
+
+// Checks if this is the first run of the configurator after an install
+func isFirstRun(configDir string) bool {
+	upgradeFilePath := filepath.Join(configDir, upgradeFlagFile)
+
+	// Load the config normally if the upgrade flag file isn't there
+	_, err := os.Stat(upgradeFilePath)
+	return !os.IsNotExist(err)
 }
 
 // Returns whether or not this is the first run of the configurator since a previous installation
 func (c *Client) IsFirstRun() (bool, error) {
-	expandedPath, err := homedir.Expand(c.configPath)
+	expandedPath, err := homedir.Expand(c.ConfigPath())
 	if err != nil {
 		return false, fmt.Errorf("error expanding settings file path: %w", err)
 	}
-	return rp.IsFirstRun(expandedPath), nil
+	return isFirstRun(expandedPath), nil
 }
 
-// Load the Prometheus template, do an template variable substitution, and save it
+// Load the Prometheus template, do a template variable substitution, and save it
 func (c *Client) UpdatePrometheusConfiguration(config *config.RocketPoolConfig) error {
-	prometheusTemplatePath, err := homedir.Expand(fmt.Sprintf("%s/%s", c.configPath, PrometheusConfigTemplate))
+	prometheusTemplatePath, err := homedir.Expand(fmt.Sprintf("%s/%s", c.ConfigPath(), PrometheusConfigTemplate))
 	if err != nil {
 		return fmt.Errorf("Error expanding Prometheus template path: %w", err)
 	}
 
-	prometheusConfigPath, err := homedir.Expand(fmt.Sprintf("%s/%s", c.configPath, PrometheusFile))
+	prometheusConfigPath, err := homedir.Expand(fmt.Sprintf("%s/%s", c.ConfigPath(), PrometheusFile))
 	if err != nil {
 		return fmt.Errorf("Error expanding Prometheus config file path: %w", err)
 	}
@@ -292,13 +303,140 @@ func (c *Client) UpdatePrometheusConfiguration(config *config.RocketPoolConfig) 
 	return t.Write(config)
 }
 
+func (c *Client) runScript(script assets.ScriptWithContext, verbose bool, flags []string) error {
+	// Make a tmpdir
+	tmpdir, err := os.MkdirTemp("", "rocketpool-")
+	if err != nil {
+		return fmt.Errorf("error creating tmpdir: %w", err)
+	}
+	if verbose {
+		fmt.Printf("Verbose mode enabled, tmpdir %s will not be removed\n", tmpdir)
+	} else {
+		defer func() {
+			// It's fine if this fails, tmpreaper will handle it
+			_ = os.RemoveAll(tmpdir)
+		}()
+	}
+
+	// Create a file in the tmpdir
+	scriptPathName := filepath.Join(tmpdir, "script.sh")
+	scriptFile, err := os.Create(scriptPathName)
+	if err != nil {
+		return fmt.Errorf("error creating script file: %w", err)
+	}
+	if err := scriptFile.Chmod(0700); err != nil {
+		return fmt.Errorf("error setting script file permissions: %w", err)
+	}
+	// write the script to the file
+	_, err = scriptFile.Write(script.Script)
+	if err != nil {
+		return fmt.Errorf("error writing script to file: %w", err)
+	}
+	scriptFile.Close()
+
+	// Copy the context to the tmpdir
+	// If we upgrade to go 1.23+ we can probably use os.CopyFS() instead
+	err = fs.WalkDir(script.Context, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		dstpath := filepath.Join(tmpdir, path)
+		if d.IsDir() {
+			// If d is a directory, create it.
+			if verbose {
+				fmt.Printf("Creating directory: %s\n", path)
+			}
+			err = os.MkdirAll(dstpath, 0755)
+			if err != nil {
+				return err
+			}
+			return nil
+		}
+
+		// d is a file, copy it.
+		if verbose {
+			fmt.Printf("Copying file: %s\n", path)
+		}
+		scriptFile, err := os.Create(dstpath)
+		if err != nil {
+			return err
+		}
+		content, err := fs.ReadFile(script.Context, path)
+		if err != nil {
+			return err
+		}
+		_, err = scriptFile.Write(content)
+		if err != nil {
+			return err
+		}
+		err = scriptFile.Close()
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("error copying script files: %w", err)
+	}
+
+	// Initialize command
+	cmdString := fmt.Sprintf("%s %s", scriptPathName, strings.Join(flags, " "))
+	if verbose {
+		fmt.Printf("Running script: %s\n", cmdString)
+	}
+	cmd, err := c.newCommand(cmdString)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = cmd.Close()
+	}()
+
+	// Get command output pipes
+	cmdOut, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	cmdErr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+
+	// Print progress from stdout
+	go (func() {
+		scanner := bufio.NewScanner(cmdOut)
+		for scanner.Scan() {
+			fmt.Println(scanner.Text())
+		}
+	})()
+
+	// Read command & error output from stderr; render in verbose mode
+	var errMessage string
+	go (func() {
+		c := color.New(DebugColor)
+		scanner := bufio.NewScanner(cmdErr)
+		for scanner.Scan() {
+			errMessage = scanner.Text()
+			if verbose {
+				_, _ = c.Println(scanner.Text())
+			}
+		}
+	})()
+
+	// Run command and return error output
+	err = cmd.Run()
+	if err != nil {
+		return fmt.Errorf("Could not run script: %s", errMessage)
+	}
+	return nil
+
+}
+
 // Install the Rocket Pool service
-func (c *Client) InstallService(verbose, noDeps bool, version, path string, dataPath string) error {
+func (c *Client) InstallService(verbose, noDeps bool, path string, dataPath string) error {
 
 	// Get installation script flags
-	flags := []string{
-		"-v", shellescape.Quote(version),
-	}
+	flags := []string{}
 	if path != "" {
 		flags = append(flags, fmt.Sprintf("-p %s", shellescape.Quote(path)))
 	}
@@ -309,174 +447,19 @@ func (c *Client) InstallService(verbose, noDeps bool, version, path string, data
 		flags = append(flags, fmt.Sprintf("-u %s", dataPath))
 	}
 
-	// Download the installation script
-	resp, err := http.Get(fmt.Sprintf(InstallerURL, version))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected http status downloading installation script: %d", resp.StatusCode)
-	}
-
-	// Sanity check that the script octet length matches content-length
-	script, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	if fmt.Sprint(len(script)) != resp.Header.Get("content-length") {
-		return fmt.Errorf("downloaded script length %d did not match content-length header %s", len(script), resp.Header.Get("content-length"))
-	}
-
-	// Initialize installation command
-	cmd, err := c.newCommand(fmt.Sprintf("sh -s -- %s", strings.Join(flags, " ")))
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = cmd.Close()
-	}()
-
-	// Pass the script to sh via its stdin fd
-	cmd.SetStdin(bytes.NewReader(script))
-
-	// Get command output pipes
-	cmdOut, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	cmdErr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
-
-	// Print progress from stdout
-	go (func() {
-		scanner := bufio.NewScanner(cmdOut)
-		for scanner.Scan() {
-			fmt.Println(scanner.Text())
-		}
-	})()
-
-	// Read command & error output from stderr; render in verbose mode
-	var errMessage string
-	go (func() {
-		c := color.New(DebugColor)
-		scanner := bufio.NewScanner(cmdErr)
-		for scanner.Scan() {
-			errMessage = scanner.Text()
-			if verbose {
-				_, _ = c.Println(scanner.Text())
-			}
-		}
-	})()
-
-	// Run command and return error output
-	err = cmd.Run()
-	if err != nil {
-		return fmt.Errorf("Could not install Rocket Pool service: %s", errMessage)
-	}
-	return nil
-
+	// Load the installation script
+	return c.runScript(assets.InstallScript(), verbose, flags)
 }
 
 // Install the update tracker
-func (c *Client) InstallUpdateTracker(verbose bool, version string) error {
+func (c *Client) InstallUpdateTracker(verbose bool) error {
 
-	// Get installation script flags
-	flags := []string{
-		"-v", fmt.Sprintf("%s", shellescape.Quote(version)),
-	}
-
-	// Download the installer package
-	url := fmt.Sprintf(UpdateTrackerURL, version)
-	resp, err := http.Get(url)
-	if err != nil {
-		return fmt.Errorf("error downloading installer package: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("downloading installer package failed with code %d - [%s]", resp.StatusCode, resp.Status)
-	}
-
-	// Create a temp file for it
-	path := filepath.Join(os.TempDir(), "install-update-tracker.sh")
-	tempFile, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0755)
-	if err != nil {
-		return fmt.Errorf("error creating temporary file for installer script: %w", err)
-	}
-	defer tempFile.Close()
-	defer os.Remove(tempFile.Name())
-	_, err = io.Copy(tempFile, resp.Body)
-	if err != nil {
-		return fmt.Errorf("error writing installer package to disk: %w", err)
-	}
-	tempFile.Close()
-
-	// Initialize installation command
-	cmd, err := c.newCommand(fmt.Sprintf("sh -c \"%s %s\"", path, strings.Join(flags, " ")))
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = cmd.Close()
-	}()
-
-	// Get command output pipes
-	cmdOut, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	cmdErr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
-
-	// Print progress from stdout
-	go (func() {
-		scanner := bufio.NewScanner(cmdOut)
-		for scanner.Scan() {
-			fmt.Println(scanner.Text())
-		}
-	})()
-
-	// Read command & error output from stderr; render in verbose mode
-	var errMessage string
-	go (func() {
-		c := color.New(DebugColor)
-		scanner := bufio.NewScanner(cmdErr)
-		for scanner.Scan() {
-			errMessage = scanner.Text()
-			if verbose {
-				_, _ = c.Println(scanner.Text())
-			}
-		}
-	})()
-
-	// Run command and return error output
-	err = cmd.Run()
-	if err != nil {
-		return fmt.Errorf("Could not install Rocket Pool update tracker: %s", errMessage)
-	}
-	return nil
-
+	return c.runScript(assets.InstallUpdateTrackerScript(), verbose, nil)
 }
 
 // Start the Rocket Pool service
 func (c *Client) StartService(composeFiles []string) error {
 
-	/*
-		// Start the API container first
-		cmd, err := c.compose([]string{}, "up -d --quiet-pull")
-		if err != nil {
-			return fmt.Errorf("error creating compose command for API container: %w", err)
-		}
-		err = c.printOutput(cmd)
-		if err != nil {
-			return fmt.Errorf("error starting API container: %w", err)
-		}
-	*/
 	// Start all of the containers
 	cmd, err := c.compose(composeFiles, "up -d --remove-orphans --quiet-pull")
 	if err != nil {
@@ -505,11 +488,6 @@ func (c *Client) StopService(composeFiles []string) error {
 
 // Stop the Rocket Pool service and remove the config folder
 func (c *Client) TerminateService(composeFiles []string, configPath string) error {
-	// Get the command to run with root privileges
-	rootCmd, err := c.getEscalationCommand()
-	if err != nil {
-		return fmt.Errorf("could not get privilege escalation command: %w", err)
-	}
 
 	// Terminate the Docker containers
 	cmd, err := c.compose(composeFiles, "down -v")
@@ -527,8 +505,9 @@ func (c *Client) TerminateService(composeFiles []string, configPath string) erro
 		return fmt.Errorf("error loading Rocket Pool directory: %w", err)
 	}
 	fmt.Printf("Deleting Rocket Pool directory (%s)...\n", path)
-	cmd = fmt.Sprintf("%s rm -rf %s", rootCmd, path)
-	_, err = c.readOutput(cmd)
+	cmd = fmt.Sprintf("rm -rf %s", path)
+	// The directory contains root-owned paths, so delete it as root
+	_, err = c.readOutputSudo(cmd)
 	if err != nil {
 		return fmt.Errorf("error deleting Rocket Pool directory: %w", err)
 	}
@@ -551,32 +530,13 @@ func (c *Client) PrintServiceStatus(composeFiles []string) error {
 func (c *Client) PrintServiceLogs(composeFiles []string, tail string, serviceNames ...string) error {
 	sanitizedStrings := make([]string, len(serviceNames))
 	for i, serviceName := range serviceNames {
-		sanitizedStrings[i] = fmt.Sprintf("%s", shellescape.Quote(serviceName))
+		sanitizedStrings[i] = shellescape.Quote(serviceName)
 	}
 	cmd, err := c.compose(composeFiles, fmt.Sprintf("logs -f --tail %s %s", shellescape.Quote(tail), strings.Join(sanitizedStrings, " ")))
 	if err != nil {
 		return err
 	}
 	return c.printOutput(cmd)
-}
-
-// Print the Rocket Pool service stats
-func (c *Client) PrintServiceStats(composeFiles []string) error {
-
-	// Get service container IDs
-	cmd, err := c.compose(composeFiles, "ps -q")
-	if err != nil {
-		return err
-	}
-	containers, err := c.readOutput(cmd)
-	if err != nil {
-		return err
-	}
-	containerIds := strings.Split(strings.TrimSpace(string(containers)), "\n")
-
-	// Print stats
-	return c.printOutput(fmt.Sprintf("docker stats %s", strings.Join(containerIds, " ")))
-
 }
 
 // Print the Rocket Pool service compose config
@@ -590,46 +550,35 @@ func (c *Client) PrintServiceCompose(composeFiles []string) error {
 
 // Get the Rocket Pool service version
 func (c *Client) GetServiceVersion() (string, error) {
-
-	// Get service container version output
-	var cmd string
-	if c.daemonPath == "" {
-		containerName, err := c.getAPIContainerName()
-		if err != nil {
-			return "", err
-		}
-		cmd = fmt.Sprintf("docker exec %s %s --version", shellescape.Quote(containerName), shellescape.Quote(APIBinPath))
-	} else {
-		cmd = fmt.Sprintf("%s --version", shellescape.Quote(c.daemonPath))
+	type versionResponse struct {
+		Status  string `json:"status"`
+		Error   string `json:"error"`
+		Version string `json:"version"`
 	}
-	versionBytes, err := c.readOutput(cmd)
+
+	responseBytes, err := c.callHTTPAPI("GET", "/api/version", nil)
 	if err != nil {
 		return "", fmt.Errorf("Could not get Rocket Pool service version: %w", err)
 	}
-
-	// Get the version string
-	outputString := string(versionBytes)
-	elements := strings.Fields(outputString) // Split on whitespace
-	if len(elements) < 1 {
-		return "", fmt.Errorf("Could not parse Rocket Pool service version number from output '%s'", outputString)
+	var response versionResponse
+	if err := json.Unmarshal(responseBytes, &response); err != nil {
+		return "", fmt.Errorf("Could not decode Rocket Pool service version response: %w", err)
 	}
-	versionString := elements[len(elements)-1]
+	if response.Error != "" {
+		return "", fmt.Errorf("Could not get Rocket Pool service version: %s", response.Error)
+	}
 
-	// Make sure it's a semantic version
-	version, err := semver.Make(versionString)
+	version, err := semver.Make(response.Version)
 	if err != nil {
-		return "", fmt.Errorf("Could not parse Rocket Pool service version number from output '%s': %w", outputString, err)
+		return "", fmt.Errorf("Could not parse Rocket Pool service version number '%s': %w", response.Version, err)
 	}
-
-	// Return the parsed semantic version (extra safety)
 	return version.String(), nil
-
 }
 
 // Increments the custom nonce parameter.
 // This is used for calls that involve multiple transactions, so they don't all have the same nonce.
 func (c *Client) IncrementCustomNonce() {
-	c.customNonce.Add(c.customNonce, big.NewInt(1))
+	c.globals.CustomNonce.Add(c.globals.CustomNonce, big.NewInt(1))
 }
 
 // Get the current Docker image used by the given container
@@ -680,6 +629,76 @@ func (c *Client) GetDockerContainerShutdownTime(container string) (time.Time, er
 func (c *Client) StopContainer(container string) (string, error) {
 
 	cmd := fmt.Sprintf("docker stop %s", container)
+	output, err := c.readOutput(cmd)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+
+}
+
+// Check whether a container exists (running or stopped)
+func (c *Client) ContainerExists(container string) (bool, error) {
+
+	cmd := fmt.Sprintf("docker ps -a --filter name=^/%s$ --format {{.Names}}", container)
+	output, err := c.readOutput(cmd)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(output)) == container, nil
+
+}
+
+// Check whether a docker network exists
+func (c *Client) NetworkExists(network string) (bool, error) {
+
+	cmd := fmt.Sprintf("docker network ls --filter name=^%s$ --format {{.Name}}", network)
+	output, err := c.readOutput(cmd)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(output)) == network, nil
+
+}
+
+// Get the names of all containers (running or stopped) that are attached to the given network
+func (c *Client) GetContainersOnNetwork(network string) ([]string, error) {
+
+	cmd := fmt.Sprintf("docker network inspect --format='{{range .Containers}}{{println .Name}}{{end}}' %s", network)
+	output, err := c.readOutput(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	names := make([]string, 0, len(lines))
+	for _, l := range lines {
+		name := strings.TrimSpace(l)
+		if name == "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names, nil
+
+}
+
+// Check whether the given Docker network has IPv6 enabled
+func (c *Client) GetNetworkIPv6Enabled(network string) (bool, error) {
+
+	cmd := fmt.Sprintf("docker network inspect --format='{{.EnableIPv6}}' %s", network)
+	output, err := c.readOutput(cmd)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(output)) == "true", nil
+
+}
+
+// Remove a docker network
+func (c *Client) RemoveNetwork(network string) (string, error) {
+
+	cmd := fmt.Sprintf("docker network rm %s", network)
 	output, err := c.readOutput(cmd)
 	if err != nil {
 		return "", err
@@ -779,6 +798,18 @@ func (c *Client) GetComposeImages(composeFiles []string) ([]string, error) {
 	return strings.Fields(string(output)), nil
 }
 
+func (c *Client) PullComposeImages(composeFiles []string) error {
+	cmd, err := c.compose(composeFiles, "pull -q")
+	if err != nil {
+		return err
+	}
+	err = c.printOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("error pulling images: %w", err)
+	}
+	return nil
+}
+
 type DockerImage struct {
 	Repository string `json:"Repository"`
 	Tag        string `json:"Tag"`
@@ -803,8 +834,8 @@ func (c *Client) GetAllDockerImages() ([]DockerImage, error) {
 
 	// docker images output puts each image as a json object on a new line (JSONL)
 	var images []DockerImage
-	lines := strings.Split(string(responseBytes), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(responseBytes), "\n")
+	for line := range lines {
 		if line == "" {
 			continue
 		}
@@ -816,6 +847,41 @@ func (c *Client) GetAllDockerImages() ([]DockerImage, error) {
 	}
 
 	return images, nil
+}
+
+type DockerContainer struct {
+	Names  string `json:"Names"`
+	State  string `json:"State"`
+	Mounts string `json:"Mounts"`
+}
+
+func (c *DockerContainer) HasVolume(volume string) bool {
+	mounts := strings.Split(c.Mounts, ",")
+	return slices.Contains(mounts, volume)
+}
+
+// Returns all Docker containers on the system with the given prefix
+func (c *Client) GetContainersByPrefix(prefix string) ([]DockerContainer, error) {
+	cmd := fmt.Sprintf("docker container ls -a --no-trunc --format json --filter label=com.docker.compose.project=%s", prefix)
+	output, err := c.readOutput(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	// docker container ls output puts each container as a json object on a new line (JSONL)
+	lines := strings.Split(string(output), "\n")
+	out := make([]DockerContainer, 0, len(lines))
+	for _, l := range lines {
+		if l == "" {
+			continue
+		}
+		var container DockerContainer
+		if err := json.Unmarshal([]byte(l), &container); err != nil {
+			return nil, fmt.Errorf("could not decode docker container: %w", err)
+		}
+		out = append(out, container)
+	}
+	return out, nil
 }
 
 // Gets the absolute file path of the client volume
@@ -852,10 +918,10 @@ func (c *Client) GetVolumeSize(volumeName string) (string, error) {
 }
 
 // Runs the prune provisioner
-func (c *Client) RunPruneProvisioner(container string, volume string, image string) error {
+func (c *Client) RunPruneProvisioner(container, volume string) error {
 
 	// Run the prune provisioner
-	cmd := fmt.Sprintf("docker run --rm --name %s -v %s:/ethclient %s", container, volume, image)
+	cmd := fmt.Sprintf("docker run --rm --name %s -v %s:/ethclient alpine:latest sh -c 'touch /ethclient/prune.lock'", container, volume)
 	output, err := c.readOutput(cmd)
 	if err != nil {
 		return err
@@ -870,52 +936,78 @@ func (c *Client) RunPruneProvisioner(container string, volume string, image stri
 
 }
 
-// Executes a Go program that triggers NM pruning
-func (c *Client) RunNethermindPruneStarter(executionContainerName string, pruneStarterContainerName string) error {
-	cmd := fmt.Sprintf(`docker run --rm  --name %s --network container:%s rocketpool/nm-prune-starter %s`, pruneStarterContainerName, executionContainerName, nethermindAdminUrl)
+// Curls the Nethermind admin URL to trigger pruning
+func (c *Client) RunNethermindPruneStarter(executionContainerName string) error {
+	retryCount := 5
+	retryTime := 3 * time.Second
 
-	err := c.printOutput(cmd)
-	if err != nil {
-		return err
+	for i := 0; i < retryCount; i++ {
+		command := fmt.Sprintf(`-m 30 -H "Content-Type: application/json" -X POST --data '{"jsonrpc":"2.0","method":"admin_prune","params":[],"id":%d}' %s`, i+1, nethermindAdminUrl)
+		cmdText := fmt.Sprintf(`docker run --quiet --rm  --name curl%s --network container:%s curlimages/curl -Ss %s`, pruneStarterContainerSuffix, executionContainerName, command)
+
+		if i != 0 {
+			fmt.Printf("Trying again in %v... (%d/%d)\n", retryTime, i+1, retryCount)
+			time.Sleep(retryTime)
+		}
+
+		cmd, err := c.newCommand(cmdText)
+		if err != nil {
+			return fmt.Errorf("error creating command for prune starter: %w", err)
+		}
+
+		stdOut, stdErr, err := cmd.OutputPipes()
+		if err != nil {
+			return fmt.Errorf("error getting output pipes for prune starter: %w", err)
+		}
+
+		err = cmd.Start()
+		if err != nil {
+			return fmt.Errorf("error running prune starter: %w", err)
+		}
+		defer func() {
+			_ = cmd.Wait()
+		}()
+
+		// Check for a curl error
+		stdErrTextBytes, err := io.ReadAll(stdErr)
+		if err != nil {
+			return fmt.Errorf("error reading error from prune starter: %w", err)
+		}
+		stdErrText := string(stdErrTextBytes)
+		if stdErrText != "" {
+			fmt.Printf("Error while curling the Nethermind admin URL: %s\n", stdErrText)
+			continue
+		}
+
+		// Grab the response
+		stdOutText, err := io.ReadAll(stdOut)
+		if err != nil {
+			return fmt.Errorf("error reading response from prune starter: %w", err)
+		}
+		// Parse the response as JSON
+		var response map[string]any
+		err = json.Unmarshal(stdOutText, &response)
+		if err != nil {
+			return fmt.Errorf("error parsing response from prune starter: %w", err)
+		}
+
+		if errObject, ok := response["error"].(map[string]any); ok {
+			fmt.Printf("Error starting prune: code %d, message = %s, data = %s\n", errObject["code"], errObject["message"], errObject["data"])
+			continue
+		}
+
+		fmt.Printf("Success: Pruning is now \"%s\"\n", response["result"])
+		fmt.Println("Your main execution client is now pruning. You can follow its progress with `rocketpool service logs eth1`.")
+		fmt.Println("NOTE: While pruning, you **cannot** interrupt the client (e.g. by restarting) or you risk corrupting the database!")
+		fmt.Println("You must let it run to completion!")
+		break
+
 	}
 	return nil
-}
-
-// Runs the EC migrator
-func (c *Client) RunEcMigrator(container string, volume string, targetDir string, mode string, image string) error {
-	cmd := fmt.Sprintf("docker run --rm --name %s -v %s:/ethclient -v %s:/mnt/external -e EC_MIGRATE_MODE='%s' %s", container, volume, targetDir, mode, image)
-	err := c.printOutput(cmd)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// Gets the size of the target directory via the EC migrator for importing, which should have the same permissions as exporting
-func (c *Client) GetDirSizeViaEcMigrator(container string, targetDir string, image string) (uint64, error) {
-	cmd := fmt.Sprintf("docker run --rm --name %s -v %s:/mnt/external -e OPERATION='size' %s", container, targetDir, image)
-	output, err := c.readOutput(cmd)
-	if err != nil {
-		return 0, fmt.Errorf("Error getting source directory size: %w", err)
-	}
-
-	trimmedOutput := strings.TrimRight(string(output), "\n")
-	dirSize, err := strconv.ParseUint(trimmedOutput, 0, 64)
-	if err != nil {
-		return 0, fmt.Errorf("Error parsing directory size output [%s]: %w", trimmedOutput, err)
-	}
-
-	return dirSize, nil
 }
 
 // Deletes the node wallet and all validator keys, and restarts the Docker containers
 func (c *Client) PurgeAllKeys(composeFiles []string) error {
-	// Get the command to run with root privileges
-	rootCmd, err := c.getEscalationCommand()
-	if err != nil {
-		return fmt.Errorf("could not get privilege escalation command: %w", err)
-	}
 
 	// Get the config
 	cfg, _, err := c.LoadConfig()
@@ -941,8 +1033,9 @@ func (c *Client) PurgeAllKeys(composeFiles []string) error {
 		return fmt.Errorf("error loading wallet path: %w", err)
 	}
 	fmt.Println("Deleting wallet...")
-	cmd := fmt.Sprintf("%s rm -f %s", rootCmd, walletPath)
-	_, err = c.readOutput(cmd)
+	cmd := fmt.Sprintf("rm -f %s", walletPath)
+	// The file is owned by root, so delete as root
+	_, err = c.readOutputSudo(cmd)
 	if err != nil {
 		return fmt.Errorf("error deleting wallet: %w", err)
 	}
@@ -953,8 +1046,9 @@ func (c *Client) PurgeAllKeys(composeFiles []string) error {
 		return fmt.Errorf("error loading password path: %w", err)
 	}
 	fmt.Println("Deleting password...")
-	cmd = fmt.Sprintf("%s rm -f %s", rootCmd, passwordPath)
-	_, err = c.readOutput(cmd)
+	cmd = fmt.Sprintf("rm -f %s", passwordPath)
+	// The file is owned by root, so delete as root
+	_, err = c.readOutputSudo(cmd)
 	if err != nil {
 		return fmt.Errorf("error deleting password: %w", err)
 	}
@@ -965,13 +1059,19 @@ func (c *Client) PurgeAllKeys(composeFiles []string) error {
 		return fmt.Errorf("error loading validators folder path: %w", err)
 	}
 	fmt.Println("Deleting validator keys...")
-	cmd = fmt.Sprintf("%s rm -rf %s/*", rootCmd, validatorsPath)
-	_, err = c.readOutput(cmd)
+	cmd = fmt.Sprintf("rm -rf %s/*", validatorsPath)
+	// The validators path can be created by the smartnode daemon (owned by root, 0600)
+	// So delete its contents as root, otherwise the * won't expand.
+	// NB: we delete the contents of the folder instead of recreating the folder
+	// This way, if the drive is full, we don't release the directory inode and fail to recreate it.
+	_, err = c.readOutputSudo(cmd)
 	if err != nil {
 		return fmt.Errorf("error deleting validator keys: %w", err)
 	}
-	cmd = fmt.Sprintf("%s rm -rf %s/.[a-zA-Z0-9]*", rootCmd, validatorsPath)
-	_, err = c.readOutput(cmd)
+	// Also delete hidden files
+	cmd = fmt.Sprintf("rm -rf %s/.[a-zA-Z0-9]*", validatorsPath)
+	// also as root, so bash can expand the regex
+	_, err = c.readOutputSudo(cmd)
 	if err != nil {
 		return fmt.Errorf("error deleting hidden files in validator folder: %w", err)
 	}
@@ -990,47 +1090,17 @@ func (c *Client) PurgeAllKeys(composeFiles []string) error {
 
 // Get the gas settings
 func (c *Client) GetGasSettings() (float64, float64, uint64) {
-	return c.maxFee, c.maxPrioFee, c.gasLimit
+	return c.globals.MaxFee, c.globals.MaxPrioFee, c.globals.GasLimit
 }
 
 // Get the gas fees
 func (c *Client) AssignGasSettings(maxFee float64, maxPrioFee float64, gasLimit uint64) {
-	c.maxFee = maxFee
-	c.maxPrioFee = maxPrioFee
-	c.gasLimit = gasLimit
+	c.globals.MaxFee = maxFee
+	c.globals.MaxPrioFee = maxPrioFee
+	c.globals.GasLimit = gasLimit
 }
 
 // Set the flags for ignoring EC and CC sync checks and forcing fallbacks to prevent unnecessary duplication of effort by the API during CLI commands
-func (c *Client) SetClientStatusFlags(ignoreSyncCheck bool, forceFallbacks bool) {
-	c.ignoreSyncCheck = ignoreSyncCheck
-	c.forceFallbacks = forceFallbacks
-}
-
-// Get the command used to escalate privileges on the system
-func (c *Client) getEscalationCommand() (string, error) {
-	// Check for sudo first
-	sudo := "sudo"
-	exists, err := c.checkIfCommandExists(sudo)
-	if err != nil {
-		return "", fmt.Errorf("error checking if %s exists: %w", sudo, err)
-	}
-	if exists {
-		return sudo, nil
-	}
-
-	// Check for doas next
-	doas := "doas"
-	exists, err = c.checkIfCommandExists(doas)
-	if err != nil {
-		return "", fmt.Errorf("error checking if %s exists: %w", doas, err)
-	}
-	if exists {
-		return doas, nil
-	}
-
-	return "", fmt.Errorf("no privilege escalation command found")
-}
-
 func (c *Client) checkIfCommandExists(command string) (bool, error) {
 	// Run `type` to check for existence
 	cmd := fmt.Sprintf("type %s", command)
@@ -1038,31 +1108,28 @@ func (c *Client) checkIfCommandExists(command string) (bool, error) {
 
 	if err != nil {
 		exitErr, isExitErr := err.(*exec.ExitError)
-		if isExitErr && exitErr.ProcessState.ExitCode() == 127 {
+		if isExitErr && exitErr.ExitCode() == 127 {
 			// Command not found
 			return false, nil
-		} else {
-			return false, fmt.Errorf("error checking if %s exists: %w", command, err)
 		}
-	} else {
-		if strings.Contains(string(output), fmt.Sprintf("%s is", command)) {
-			return true, nil
-		} else {
-			return false, fmt.Errorf("unexpected output when checking for %s: %s", command, string(output))
-		}
+		return false, fmt.Errorf("error checking if %s exists: %w", command, err)
 	}
+	if strings.Contains(string(output), fmt.Sprintf("%s is", command)) {
+		return true, nil
+	}
+	return false, fmt.Errorf("unexpected output when checking for %s: %s", command, string(output))
 }
 
 // Build a docker compose command
 func (c *Client) compose(composeFiles []string, args string) (string, error) {
 
 	// Cancel if running in non-docker mode
-	if c.daemonPath != "" {
+	if c.globals.DaemonPath != "" {
 		return "", errors.New("command unavailable in Native Mode (with '--daemon-path' option specified)")
 	}
 
 	// Get the expanded config path
-	expandedConfigPath, err := homedir.Expand(c.configPath)
+	expandedConfigPath, err := homedir.Expand(c.ConfigPath())
 	if err != nil {
 		return "", err
 	}
@@ -1146,7 +1213,6 @@ func (c *Client) deployTemplates(cfg *config.RocketPoolConfig, rocketpoolDir str
 
 	// These containers always run
 	toDeploy := []string{
-		config.ApiContainerName,
 		config.NodeContainerName,
 		config.WatchtowerContainerName,
 		config.ValidatorContainerName,
@@ -1183,6 +1249,20 @@ func (c *Client) deployTemplates(cfg *config.RocketPoolConfig, rocketpoolDir str
 		toDeploy = append(toDeploy, config.MevBoostContainerName)
 	}
 
+	// Check if we are running the Commit-Boost container locally
+	if cfg.EnableCommitBoost.Value == true && cfg.CommitBoost.Mode.Value.(cfgtypes.Mode) == cfgtypes.Mode_Local {
+		toDeploy = append(toDeploy, config.CommitBoostContainerName)
+
+		// Render the Commit-Boost PBS config file (cb_config.toml)
+		cbConfigTmpl := template.Template{
+			Src: filepath.Join(templatesFolder, config.CommitBoostConfigTemplate+".tmpl"),
+			Dst: filepath.Join(runtimeFolder, config.CommitBoostConfigFile),
+		}
+		if err := cbConfigTmpl.Write(cfg); err != nil {
+			return []string{}, fmt.Errorf("could not render Commit-Boost config file: %w", err)
+		}
+	}
+
 	for _, containerName := range toDeploy {
 		containers, err := composePaths.File(containerName).Write(cfg)
 		if err != nil {
@@ -1194,24 +1274,23 @@ func (c *Client) deployTemplates(cfg *config.RocketPoolConfig, rocketpoolDir str
 	// Create the custom keys dir
 	customKeyDir, err := homedir.Expand(filepath.Join(cfg.Smartnode.DataPath.Value.(string), "custom-keys"))
 	if err != nil {
-		fmt.Printf("%sWARNING: Couldn't expand the custom validator key directory (%s). You will not be able to recover any minipool keys you created outside of the Smart Node until you create the folder manually.%s\n", colorYellow, err.Error(), colorReset)
+		clicolor.YellowPrintf("WARNING: Couldn't expand the custom validator key directory (%s). You will not be able to recover any minipool keys you created outside of the Smart Node until you create the folder manually.\n", err.Error())
 		return deployedContainers, nil
 	}
 	err = os.MkdirAll(customKeyDir, 0775)
 	if err != nil {
-		fmt.Printf("%sWARNING: Couldn't create the custom validator key directory (%s). You will not be able to recover any minipool keys you created outside of the Smart Node until you create the folder [%s] manually.%s\n", colorYellow, err.Error(), customKeyDir, colorReset)
+		clicolor.YellowPrintf("WARNING: Couldn't create the custom validator key directory (%s). You will not be able to recover any minipool keys you created outside of the Smart Node until you create the folder [%s] manually.\n", err.Error(), customKeyDir)
 	}
 
 	// Create the rewards file dir
-	rewardsFilePath, err := homedir.Expand(cfg.Smartnode.GetRewardsTreePath(0, false))
+	rewardsFileDir, err := homedir.Expand(cfg.Smartnode.GetRewardsTreeDirectory(false))
 	if err != nil {
-		fmt.Printf("%sWARNING: Couldn't expand the rewards tree file directory (%s). You will not be able to view or claim your rewards until you create the folder manually.%s\n", colorYellow, err.Error(), colorReset)
+		clicolor.YellowPrintf("WARNING: Couldn't expand the rewards tree file directory (%s). You will not be able to view or claim your rewards until you create the folder manually.\n", err.Error())
 		return deployedContainers, nil
 	}
-	rewardsFileDir := filepath.Dir(rewardsFilePath)
 	err = os.MkdirAll(rewardsFileDir, 0775)
 	if err != nil {
-		fmt.Printf("%sWARNING: Couldn't create the rewards tree file directory (%s). You will not be able to view or claim your rewards until you create the folder [%s] manually.%s\n", colorYellow, err.Error(), rewardsFileDir, colorReset)
+		clicolor.YellowPrintf("WARNING: Couldn't create the rewards tree file directory (%s). You will not be able to view or claim your rewards until you create the folder [%s] manually.\n", err.Error(), rewardsFileDir)
 	}
 
 	return c.composeAddons(cfg, rocketpoolDir, deployedContainers)
@@ -1247,154 +1326,115 @@ func (c *Client) composeAddons(cfg *config.RocketPoolConfig, rocketpoolDir strin
 
 }
 
-// Call the Rocket Pool API
-func (c *Client) callAPI(args string, otherArgs ...string) ([]byte, error) {
-	// Sanitize and parse the args
-	ignoreSyncCheckFlag, forceFallbackECFlag, args := c.getApiCallArgs(args, otherArgs...)
-
-	// Create the command to run
-	var cmd string
-	if c.daemonPath == "" {
-		containerName, err := c.getAPIContainerName()
+// getAPIURL returns the base URL for the node's HTTP API server, e.g.
+// "http://127.0.0.1:8280".  The result is derived from config and cached.
+func (c *Client) getAPIURL() string {
+	c.apiURLOnce.Do(func() {
+		cfg, _, err := c.LoadConfig()
 		if err != nil {
-			return []byte{}, err
+			return
 		}
-		cmd = fmt.Sprintf("docker exec %s %s %s %s %s %s api %s", shellescape.Quote(containerName), shellescape.Quote(APIBinPath), ignoreSyncCheckFlag, forceFallbackECFlag, c.getGasOpts(), c.getCustomNonce(), args)
-	} else {
-		cmd = fmt.Sprintf("%s --settings %s %s %s %s %s api %s",
-			c.daemonPath,
-			shellescape.Quote(fmt.Sprintf("%s/%s", c.configPath, SettingsFile)),
-			ignoreSyncCheckFlag,
-			forceFallbackECFlag,
-			c.getGasOpts(),
-			c.getCustomNonce(),
-			args)
-	}
-
-	// Run the command
-	return c.runApiCall(cmd)
+		port, ok := cfg.Smartnode.APIPort.Value.(uint16)
+		if !ok || port == 0 {
+			return
+		}
+		c.apiURL = fmt.Sprintf("http://127.0.0.1:%d", port)
+	})
+	return c.apiURL
 }
 
-// Call the Rocket Pool API with some custom environment variables
-func (c *Client) callAPIWithEnvVars(envVars map[string]string, args string, otherArgs ...string) ([]byte, error) {
-	// Sanitize and parse the args
-	ignoreSyncCheckFlag, forceFallbackECFlag, args := c.getApiCallArgs(args, otherArgs...)
-
-	// Create the command to run
-	var cmd string
-	if c.daemonPath == "" {
-		envArgs := ""
-		for key, value := range envVars {
-			os.Setenv(key, shellescape.Quote(value))
-			envArgs += fmt.Sprintf("-e %s ", key)
-		}
-		containerName, err := c.getAPIContainerName()
-		if err != nil {
-			return []byte{}, err
-		}
-		cmd = fmt.Sprintf("docker exec %s %s %s %s %s %s %s api %s", envArgs, shellescape.Quote(containerName), shellescape.Quote(APIBinPath), ignoreSyncCheckFlag, forceFallbackECFlag, c.getGasOpts(), c.getCustomNonce(), args)
-	} else {
-		envArgs := ""
-		for key, value := range envVars {
-			envArgs += fmt.Sprintf("%s=%s ", key, shellescape.Quote(value))
-		}
-		cmd = fmt.Sprintf("%s %s --settings %s %s %s %s %s api %s",
-			envArgs,
-			c.daemonPath,
-			shellescape.Quote(fmt.Sprintf("%s/%s", c.configPath, SettingsFile)),
-			ignoreSyncCheckFlag,
-			forceFallbackECFlag,
-			c.getGasOpts(),
-			c.getCustomNonce(),
-			args)
-	}
-
-	// Run the command
-	return c.runApiCall(cmd)
+// callHTTPAPI calls the node's HTTP API server with a 5-minute safety timeout.
+// method is "GET" or "POST".
+// path is the URL path, e.g. "/api/node/status".
+// params are appended as query string parameters for GET or as a form body for POST.
+// The response body is returned as-is; callers unmarshal it the same way
+func (c *Client) callHTTPAPI(method, path string, params url.Values) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	return c.callHTTPAPICtx(ctx, method, path, params)
 }
 
-func (c *Client) getApiCallArgs(args string, otherArgs ...string) (string, string, string) {
-	// Sanitize arguments
-	var sanitizedArgs []string
-	for _, arg := range strings.Fields(args) {
-		sanitizedArg := shellescape.Quote(arg)
-		sanitizedArgs = append(sanitizedArgs, sanitizedArg)
+// callHTTPAPICtx is the context-aware core of callHTTPAPI.  Use it directly
+// when a tighter deadline is required (e.g. optional/informational requests
+// that must not block the user).
+func (c *Client) callHTTPAPICtx(ctx context.Context, method, path string, params url.Values) ([]byte, error) {
+	base := c.getAPIURL()
+	if base == "" {
+		return nil, fmt.Errorf("node HTTP API URL is not configured (APIPort may be 0)")
 	}
-	args = strings.Join(sanitizedArgs, " ")
-	if len(otherArgs) > 0 {
-		for _, arg := range otherArgs {
-			sanitizedArg := shellescape.Quote(arg)
-			args += fmt.Sprintf(" %s", sanitizedArg)
+
+	target := base + path
+
+	var req *http.Request
+	var err error
+	switch method {
+	case http.MethodGet:
+		if len(params) > 0 {
+			target += "?" + params.Encode()
 		}
-	}
-
-	ignoreSyncCheckFlag := ""
-	if c.ignoreSyncCheck {
-		ignoreSyncCheckFlag = "--ignore-sync-check"
-	}
-	forceFallbacksFlag := ""
-	if c.forceFallbacks {
-		forceFallbacksFlag = "--force-fallbacks"
-	}
-
-	return ignoreSyncCheckFlag, forceFallbacksFlag, args
-}
-
-func (c *Client) runApiCall(cmd string) ([]byte, error) {
-	if c.debugPrint {
-		fmt.Println("To API:")
-		fmt.Println(cmd)
-	}
-
-	output, err := c.readOutput(cmd)
-
-	if c.debugPrint {
-		if output != nil {
-			fmt.Println("API Out:")
-			fmt.Println(string(output))
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	case http.MethodPost:
+		if params == nil {
+			params = url.Values{}
 		}
-		if err != nil {
-			fmt.Println("API Err:")
-			fmt.Println(err.Error())
+		// Propagate the gas settings
+		if c.globals.MaxFee > 0 {
+			params.Set("maxFee", strconv.FormatFloat(c.globals.MaxFee, 'f', -1, 64))
 		}
+		if c.globals.MaxPrioFee > 0 {
+			params.Set("maxPrioFee", strconv.FormatFloat(c.globals.MaxPrioFee, 'f', -1, 64))
+		}
+		if c.globals.GasLimit > 0 {
+			params.Set("gasLimit", strconv.FormatFloat(float64(c.globals.GasLimit), 'f', 0, 64))
+		}
+		if c.globals.CustomNonce != nil {
+			params.Set("nonce", c.globals.CustomNonce.String())
+		}
+		body := []byte(params.Encode())
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+	default:
+		return nil, fmt.Errorf("unsupported HTTP method: %s", method)
 	}
-
-	// Reset the gas settings after the call
-	c.maxFee = c.originalMaxFee
-	c.maxPrioFee = c.originalMaxPrioFee
-	c.gasLimit = c.originalGasLimit
-
-	return output, err
-}
-
-// Get the API container name
-func (c *Client) getAPIContainerName() (string, error) {
-	cfg, _, err := c.LoadConfig()
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("error building HTTP request for %s %s: %w", method, path, err)
 	}
-	if cfg.Smartnode.ProjectName.Value == "" {
-		return "", errors.New("Rocket Pool docker project name not set")
-	}
-	return cfg.Smartnode.ProjectName.Value.(string) + APIContainerSuffix, nil
-}
 
-// Get gas price & limit flags
-func (c *Client) getGasOpts() string {
-	var opts string
-	opts += fmt.Sprintf("--maxFee %f ", c.maxFee)
-	opts += fmt.Sprintf("--maxPrioFee %f ", c.maxPrioFee)
-	opts += fmt.Sprintf("--gasLimit %d ", c.gasLimit)
-	return opts
-}
-
-func (c *Client) getCustomNonce() string {
-	// Set the custom nonce
-	nonce := ""
-	if c.customNonce != nil {
-		nonce = fmt.Sprintf("--nonce %s", c.customNonce.String())
+	if c.globals.DebugPrint {
+		fmt.Printf("HTTP API: %s %s\n", method, target)
 	}
-	return nonce
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("error calling HTTP API %s %s: %w", method, path, err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	responseBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading HTTP API response for %s %s: %w", method, path, err)
+	}
+
+	if c.globals.DebugPrint {
+		fmt.Printf("HTTP API response (%d): %s\n", resp.StatusCode, string(responseBytes))
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		var apiErr struct {
+			Error string `json:"error"`
+		}
+		if jerr := json.Unmarshal(responseBytes, &apiErr); jerr == nil && apiErr.Error != "" {
+			return nil, errors.New(apiErr.Error)
+		}
+
+		return nil, fmt.Errorf("HTTP API %s %s returned status %d: %s", method, path, resp.StatusCode, string(responseBytes))
+	}
+
+	return responseBytes, nil
 }
 
 // Run a command and print its output
@@ -1405,7 +1445,7 @@ func (c *Client) printOutput(cmdText string) error {
 	if err != nil {
 		return err
 	}
-	defer cmd.Close()
+	defer cmd.Close() //nolint:errcheck
 
 	cmd.SetStdout(os.Stdout)
 	cmd.SetStderr(os.Stderr)
@@ -1418,6 +1458,26 @@ func (c *Client) printOutput(cmdText string) error {
 	// Wait for the command to exit
 	return cmd.Wait()
 
+}
+
+// Run a command as root and return its output
+func (c *Client) readOutputSudo(rootCmdText string) ([]byte, error) {
+	var escCmd string
+	for _, escalationCommand := range []string{"sudo", "doas"} {
+		exists, err := c.checkIfCommandExists(escalationCommand)
+		if err != nil {
+			return nil, fmt.Errorf("error checking if %s exists: %w", escalationCommand, err)
+		}
+		if exists {
+			escCmd = escalationCommand
+			break
+		}
+	}
+	if escCmd == "" {
+		return nil, fmt.Errorf("no privilege escalation command found")
+	}
+
+	return c.readOutput(fmt.Sprintf("%s bash -c %s", escCmd, shellescape.Quote(rootCmdText)))
 }
 
 // Run a command and return its output

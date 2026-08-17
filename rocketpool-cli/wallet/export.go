@@ -4,16 +4,14 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/urfave/cli"
-
+	promptcli "github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
 )
 
-func exportWallet(c *cli.Context) error {
+func exportWallet(secureSession bool) error {
 
 	// Get RP client
-	rp := rocketpool.NewClientFromCtx(c)
+	rp := rocketpool.NewClient()
 	defer rp.Close()
 
 	// Get & check wallet status
@@ -26,7 +24,7 @@ func exportWallet(c *cli.Context) error {
 		return nil
 	}
 
-	if !c.GlobalBool("secure-session") {
+	if !secureSession {
 		// Check if stdout is interactive
 		stat, err := os.Stdout.Stat()
 		if err != nil {
@@ -36,7 +34,7 @@ func exportWallet(c *cli.Context) error {
 		}
 
 		if (stat.Mode()&os.ModeCharDevice) == os.ModeCharDevice &&
-			!cliutils.ConfirmSecureSession("Exporting a wallet will print sensitive information to your screen.") {
+			!promptcli.ConfirmSecureSession("Exporting a wallet will print sensitive information to your screen.") {
 			return nil
 		}
 	}

@@ -10,6 +10,7 @@ const CheckpointSyncUrlID string = "checkpointSyncUrl"
 const P2pPortID string = "p2pPort"
 const P2pQuicPortID string = "p2pQuicPort"
 const ApiPortID string = "apiPort"
+const KeymanagerApiPortID string = "keymanagerApiPort"
 const OpenApiPortID string = "openApiPort"
 const DoppelgangerDetectionID string = "doppelgangerDetection"
 
@@ -19,6 +20,7 @@ const defaultCheckpointSyncProvider string = ""
 const defaultP2pPort uint16 = 9001
 const defaultP2pQuicPort uint16 = 8001
 const defaultBnApiPort uint16 = 5052
+const defaultKeymanagerApiPort uint16 = 5062
 const defaultOpenBnApiPort string = string(config.RPC_Closed)
 const defaultDoppelgangerDetection bool = true
 
@@ -32,6 +34,9 @@ type ConsensusCommonConfig struct {
 	// The checkpoint sync URL if used
 	CheckpointSyncProvider config.Parameter `yaml:"checkpointSyncProvider,omitempty"`
 
+	// The suggested block gas limit
+	SuggestedBlockGasLimit config.Parameter `yaml:"suggestedBlockGasLimit,omitempty"`
+
 	// The port to use for gossip traffic
 	P2pPort config.Parameter `yaml:"p2pPort,omitempty"`
 
@@ -40,6 +45,9 @@ type ConsensusCommonConfig struct {
 
 	// Toggle for forwarding the HTTP API port outside of Docker
 	OpenApiPort config.Parameter `yaml:"openApiPort,omitempty"`
+
+	// The port to expose the Keymanager API on
+	KeymanagerApiPort config.Parameter `yaml:"keymanagerApiPort,omitempty"`
 
 	// Toggle for enabling doppelganger detection
 	DoppelgangerDetection config.Parameter `yaml:"doppelgangerDetection,omitempty"`
@@ -68,11 +76,22 @@ func NewConsensusCommonConfig(cfg *RocketPoolConfig) *ConsensusCommonConfig {
 			ID:   CheckpointSyncUrlID,
 			Name: "Checkpoint Sync URL",
 			Description: "If you would like to instantly sync using an existing Beacon node, enter its URL.\n" +
-				"Example: https://checkpoint-sync.holesky.ethpandaops.io (for the Holesky Testnet).\n" +
+				"Example: https://checkpoint-sync.hoodi.ethpandaops.io (for the Hoodi Testnet).\n" +
 				"Leave this blank if you want to sync normally from the start of the chain.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: defaultCheckpointSyncProvider},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2},
+			CanBeBlank:         true,
+			OverwriteOnUpgrade: false,
+		},
+
+		SuggestedBlockGasLimit: config.Parameter{
+			ID:                 "suggestedBlockGasLimit",
+			Name:               "Suggested Block Gas Limit",
+			Description:        "The block gas limit that should be used for externally built blocks. Leave blank to use the Consensus Client default.",
+			Type:               config.ParameterType_String,
+			Default:            map[config.Network]interface{}{config.Network_All: ""},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2, config.ContainerID_Validator},
 			CanBeBlank:         true,
 			OverwriteOnUpgrade: false,
 		},
@@ -94,7 +113,7 @@ func NewConsensusCommonConfig(cfg *RocketPoolConfig) *ConsensusCommonConfig {
 			Description:        "The port your Consensus client should run its HTTP API on.",
 			Type:               config.ParameterType_Uint16,
 			Default:            map[config.Network]interface{}{config.Network_All: defaultBnApiPort},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Eth2, config.ContainerID_Validator, config.ContainerID_Prometheus},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Eth2, config.ContainerID_Validator, config.ContainerID_Prometheus},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
@@ -109,6 +128,17 @@ func NewConsensusCommonConfig(cfg *RocketPoolConfig) *ConsensusCommonConfig {
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 			Options:            portModes,
+		},
+
+		KeymanagerApiPort: config.Parameter{
+			ID:                 KeymanagerApiPortID,
+			Name:               "Keymanager API Port",
+			Description:        "The port your validator client should run its Keymanager API on.",
+			Type:               config.ParameterType_Uint16,
+			Default:            map[config.Network]interface{}{config.Network_All: defaultKeymanagerApiPort},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
+			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
 		},
 
 		DoppelgangerDetection: config.Parameter{
@@ -130,13 +160,15 @@ func (cfg *ConsensusCommonConfig) GetParameters() []*config.Parameter {
 		&cfg.Graffiti,
 		&cfg.CheckpointSyncProvider,
 		&cfg.P2pPort,
+		&cfg.SuggestedBlockGasLimit,
 		&cfg.ApiPort,
 		&cfg.OpenApiPort,
+		&cfg.KeymanagerApiPort,
 		&cfg.DoppelgangerDetection,
 	}
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *ConsensusCommonConfig) GetConfigTitle() string {
 	return cfg.Title
 }

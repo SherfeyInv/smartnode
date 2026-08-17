@@ -1,9 +1,51 @@
 FROM debian:12.11-slim
 
+# Install build tools
+RUN dpkg --add-architecture arm64
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+	--mount=type=cache,target=/var/lib/apt,sharing=locked \
+	apt update && apt install -y \
+	build-essential \
+	gcc-aarch64-linux-gnu \
+	libc6-dev-arm64-cross \
+	g++-aarch64-linux-gnu \
+	wget
+# Load the project's go mod dependencies into the image
+COPY go.mod /src/go.mod
+COPY go.sum /src/go.sum
+# Using a cache mount and custom GOMODCACHE lets us use docker build cache to keep the most recent dependencies
+# That way when we rebuild with changes to dependencies, only the delta is downloaded.
+WORKDIR /src
+RUN --mount=type=cache,target=/go/.cache/pkg/mod,id=gomodcache \
+	GOMODCACHE=/go/.cache/pkg/mod go mod download -x
+
+FROM --platform=$BUILDPLATFORM smartnode_dependencies AS build
+ARG VERSION
+ARG BUILDPLATFORM
 ARG TARGETARCH
-COPY ./rocketpool/rocketpool-daemon-linux-${TARGETARCH} /go/bin/rocketpool
+# Create a directory for the output
+RUN mkdir /build
+# Build the project by mounting ./ to /src, and go buildcache into the image
+RUN --mount=type=cache,target=/root/.cache/go-build \
+	--mount=type=bind,target=/src,source=./ \
+	cd /src && make NO_DOCKER=true BUILD_DIR=/build \
+	/build/${VERSION}/bin/rocketpool-daemon-linux-${TARGETARCH} \
+	/build/${VERSION}/bin/rocketpool-cli-linux-${TARGETARCH} \
+	/build/${VERSION}/bin/treegen-linux-${TARGETARCH}
 
-RUN apt update && apt install ca-certificates -y
+FROM debian:bookworm-slim AS smartnode
+ARG TARGETARCH
+ARG VERSION
 
-# Container entry point
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+	--mount=type=cache,target=/var/lib/apt,sharing=locked \
+	apt update && apt install ca-certificates -y
+
+COPY --from=build /build/${VERSION}/bin/rocketpool-daemon-linux-${TARGETARCH} /go/bin/rocketpool
+COPY --from=build /build/${VERSION}/bin/rocketpool-cli-linux-${TARGETARCH} /go/bin/rocketpool-cli
+COPY --from=build /build/${VERSION}/bin/treegen-linux-${TARGETARCH} /go/bin/treegen
+
+ENV PATH="$PATH:/go/bin"
+
+# Default entry point
 ENTRYPOINT ["/go/bin/rocketpool"]

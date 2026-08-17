@@ -1,19 +1,19 @@
 package auction
 
 import (
-	"fmt"
 	"math/big"
 
-	"github.com/rocket-pool/rocketpool-go/auction"
-	"github.com/urfave/cli"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/auction"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canClaimFromLot(c *cli.Context, lotIndex uint64) (*api.CanClaimFromLotResponse, error) {
+func canClaimFromLot(c *cli.Command, lotIndex uint64) (*api.CanClaimFromLotResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -74,9 +74,9 @@ func canClaimFromLot(c *cli.Context, lotIndex uint64) (*api.CanClaimFromLotRespo
 		if err != nil {
 			return err
 		}
-		gasInfo, err := auction.EstimateClaimBidGas(rp, lotIndex, opts)
+		gasLimits, err := auction.EstimateClaimBidGas(rp, lotIndex, opts)
 		if err == nil {
-			response.GasInfo = gasInfo
+			response.GasLimits = gasLimits
 		}
 		return err
 	})
@@ -87,22 +87,18 @@ func canClaimFromLot(c *cli.Context, lotIndex uint64) (*api.CanClaimFromLotRespo
 	}
 
 	// Update & return response
-	response.CanClaim = !(response.DoesNotExist || response.NoBidFromAddress || response.NotCleared)
+	response.CanClaim = !response.DoesNotExist && !response.NoBidFromAddress && !response.NotCleared
 	return &response, nil
 
 }
 
-func claimFromLot(c *cli.Context, lotIndex uint64) (*api.ClaimFromLotResponse, error) {
+func claimFromLot(c *cli.Command, lotIndex uint64, opts *bind.TransactOpts) (*api.ClaimFromLotResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
 		return nil, err
 	}
 	if err := services.RequireRocketStorage(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -112,18 +108,6 @@ func claimFromLot(c *cli.Context, lotIndex uint64) (*api.ClaimFromLotResponse, e
 
 	// Response
 	response := api.ClaimFromLotResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Claim from lot
 	hash, err := auction.ClaimBid(rp, lotIndex, opts)

@@ -10,15 +10,16 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/rocket-pool/rocketpool-go/dao"
-	"github.com/rocket-pool/rocketpool-go/dao/trustednode"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/tokens"
-	"github.com/rocket-pool/rocketpool-go/types"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/dao"
+	"github.com/rocket-pool/smartnode/bindings/dao/trustednode"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/tokens"
+	"github.com/rocket-pool/smartnode/bindings/types"
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services/beacon"
 	"github.com/rocket-pool/smartnode/shared/services/config"
-	"golang.org/x/sync/errgroup"
 )
 
 // Represents the collector for the user's trusted node
@@ -234,7 +235,7 @@ func (collector *TrustedNodeCollector) Collect(channel chan<- prometheus.Metric)
 					return fmt.Errorf("Error getting node balances: %w", err)
 				}
 				lock.Lock()
-				ethBalances[id] = eth.WeiToEth(balances.ETH)
+				ethBalances[id] = math.WeiToEth(balances.ETH)
 				lock.Unlock()
 				return nil
 			}

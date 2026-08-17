@@ -2,12 +2,14 @@ package pdao
 
 import (
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/dao/protocol"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
+	"github.com/urfave/cli/v3"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/protocol"
+	"github.com/rocket-pool/smartnode/bindings/network"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/urfave/cli"
-	"golang.org/x/sync/errgroup"
 )
 
 // Settings
@@ -15,7 +17,7 @@ const (
 	ProposalDetailsBatchSize = 10
 )
 
-func getProposals(c *cli.Context) (*api.PDAOProposalsResponse, error) {
+func getProposals(c *cli.Command) (*api.PDAOProposalsResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -60,6 +62,11 @@ func getProposals(c *cli.Context) (*api.PDAOProposalsResponse, error) {
 }
 
 func getProposalsWithNodeVoteDirection(rp *rocketpool.RocketPool, nodeAddress common.Address, props []protocol.ProtocolDaoProposalDetails) ([]api.PDAOProposalWithNodeVoteDirection, error) {
+	delegateAddress, err := network.GetCurrentVotingDelegate(rp, nodeAddress, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	// Load node votes in batches
 	proposalCount := uint64(len(props))
 	details := make([]api.PDAOProposalWithNodeVoteDirection, proposalCount)
@@ -79,10 +86,16 @@ func getProposalsWithNodeVoteDirection(rp *rocketpool.RocketPool, nodeAddress co
 				prop := props[pi]
 				details[pi].ProtocolDaoProposalDetails = prop
 				voteDir, err := protocol.GetAddressVoteDirection(rp, prop.ID, nodeAddress, nil)
-				if err == nil {
-					details[pi].NodeVoteDirection = voteDir
+				if err != nil {
+					return err
 				}
-				return err
+				delegateVoteDir, err := protocol.GetAddressVoteDirection(rp, prop.ID, delegateAddress, nil)
+				if err != nil {
+					return err
+				}
+				details[pi].NodeVoteDirection = voteDir
+				details[pi].DelegateVoteDirection = delegateVoteDir
+				return nil
 			})
 		}
 		if err := wg.Wait(); err != nil {
@@ -93,7 +106,7 @@ func getProposalsWithNodeVoteDirection(rp *rocketpool.RocketPool, nodeAddress co
 	return details, nil
 }
 
-func getProposal(c *cli.Context, id uint64) (*api.PDAOProposalResponse, error) {
+func getProposal(c *cli.Command, id uint64) (*api.PDAOProposalResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -120,6 +133,12 @@ func getProposal(c *cli.Context, id uint64) (*api.PDAOProposalResponse, error) {
 		return nil, err
 	}
 
+	// Get the voting delegate address
+	delegateAddress, err := network.GetCurrentVotingDelegate(rp, nodeAccount.Address, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get proposal
 	proposal, err := protocol.GetProposalDetails(rp, id, nil)
 	if err != nil {
@@ -132,10 +151,17 @@ func getProposal(c *cli.Context, id uint64) (*api.PDAOProposalResponse, error) {
 		return nil, err
 	}
 
+	// Get the delegate vote direction
+	delegateVoteDir, err := protocol.GetAddressVoteDirection(rp, id, delegateAddress, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	// Make the augmented proposal
 	augmentedProp := api.PDAOProposalWithNodeVoteDirection{
 		ProtocolDaoProposalDetails: proposal,
 		NodeVoteDirection:          voteDir,
+		DelegateVoteDirection:      delegateVoteDir,
 	}
 	response.Proposal = augmentedProp
 

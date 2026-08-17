@@ -2,13 +2,16 @@ package config
 
 import (
 	"github.com/pbnjay/memory"
+
 	"github.com/rocket-pool/smartnode/shared/types/config"
 )
 
 const (
-	tekuTagTest         string = "consensys/teku:24.8.0"
-	tekuTagProd         string = "consensys/teku:24.8.0"
-	defaultTekuMaxPeers uint16 = 100
+	tekuTagTest                string = "consensys/teku:26.8.0"
+	tekuTagProd                string = "consensys/teku:26.8.0"
+	defaultTekuMaxPeers        uint16 = 100
+	defaultTekuP2pIpv6Port     uint16 = 9090
+	defaultTekuP2pQuicIpv6Port uint16 = 8002
 )
 
 // Configuration for Teku
@@ -36,9 +39,21 @@ type TekuConfig struct {
 	// Custom command line flags for the BN
 	AdditionalBnFlags config.Parameter `yaml:"additionalBnFlags,omitempty"`
 
+	// The IPv6 P2P port for Teku (Teku uses a separate port for IPv6)
+	P2pIpv6Port config.Parameter `yaml:"p2pIpv6Port,omitempty"`
+
+	// The port to use for gossip traffic using the QUIC protocol
+	P2pQuicPort config.Parameter `yaml:"p2pQuicPort,omitempty"`
+
+	// The IPv6 QUIC P2P port (Teku uses a separate port for IPv6 QUIC)
+	P2pQuicIpv6Port config.Parameter `yaml:"p2pQuicIpv6Port,omitempty"`
+
 	// Custom command line flags for the VC
 	AdditionalVcFlags config.Parameter `yaml:"additionalVcFlags,omitempty"`
 }
+
+// Type assertion for TekuConfig
+var _ config.ConsensusConfig = &TekuConfig{}
 
 // Generates a new Teku configuration
 func NewTekuConfig(cfg *RocketPoolConfig) *TekuConfig {
@@ -88,7 +103,7 @@ func NewTekuConfig(cfg *RocketPoolConfig) *TekuConfig {
 			Default: map[config.Network]interface{}{
 				config.Network_Mainnet: tekuTagProd,
 				config.Network_Devnet:  tekuTagTest,
-				config.Network_Holesky: tekuTagTest,
+				config.Network_Testnet: tekuTagTest,
 			},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2, config.ContainerID_Validator},
 			CanBeBlank:         false,
@@ -101,7 +116,7 @@ func NewTekuConfig(cfg *RocketPoolConfig) *TekuConfig {
 			Description:        "When enabled, Teku will use the Validator Slashing Protection feature. See https://docs.teku.consensys.io/how-to/prevent-slashing/detect-slashing for details.",
 			Type:               config.ParameterType_Bool,
 			Default:            map[config.Network]interface{}{config.Network_All: true},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2, config.ContainerID_Validator},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
@@ -109,7 +124,7 @@ func NewTekuConfig(cfg *RocketPoolConfig) *TekuConfig {
 		AdditionalBnFlags: config.Parameter{
 			ID:                 "additionalBnFlags",
 			Name:               "Additional Beacon Node Flags",
-			Description:        "Additional custom command line flags you want to pass Teku's Beacon Node, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass Teku's Beacon Node, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2},
@@ -117,10 +132,43 @@ func NewTekuConfig(cfg *RocketPoolConfig) *TekuConfig {
 			OverwriteOnUpgrade: false,
 		},
 
+		P2pIpv6Port: config.Parameter{
+			ID:                 "p2pIpv6Port",
+			Name:               "P2P IPv6 Port",
+			Description:        "The port Teku uses for P2P communication over IPv6. Teku requires a dedicated port for IPv6 (separate from the main P2P port). Only used when IPv6 support is enabled.",
+			Type:               config.ParameterType_Uint16,
+			Default:            map[config.Network]interface{}{config.Network_All: defaultTekuP2pIpv6Port},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2},
+			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
+		},
+
+		P2pQuicPort: config.Parameter{
+			ID:                 P2pQuicPortID,
+			Name:               "P2P QUIC Port",
+			Description:        "The port to use for P2P traffic using the QUIC protocol.",
+			Type:               config.ParameterType_Uint16,
+			Default:            map[config.Network]interface{}{config.Network_All: defaultP2pQuicPort},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2},
+			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
+		},
+
+		P2pQuicIpv6Port: config.Parameter{
+			ID:                 "p2pQuicIpv6Port",
+			Name:               "P2P QUIC IPv6 Port",
+			Description:        "The port Teku uses for P2P QUIC traffic over IPv6. Teku requires a dedicated port for IPv6 QUIC (separate from the main QUIC port). Only used when IPv6 support is enabled.",
+			Type:               config.ParameterType_Uint16,
+			Default:            map[config.Network]interface{}{config.Network_All: defaultTekuP2pQuicIpv6Port},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2},
+			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
+		},
+
 		AdditionalVcFlags: config.Parameter{
 			ID:                 "additionalVcFlags",
 			Name:               "Additional Validator Client Flags",
-			Description:        "Additional custom command line flags you want to pass Teku's Validator Client, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass Teku's Validator Client, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
@@ -139,6 +187,9 @@ func (cfg *TekuConfig) GetParameters() []*config.Parameter {
 		&cfg.UseSlashingProtection,
 		&cfg.ContainerTag,
 		&cfg.AdditionalBnFlags,
+		&cfg.P2pIpv6Port,
+		&cfg.P2pQuicPort,
+		&cfg.P2pQuicIpv6Port,
 		&cfg.AdditionalVcFlags,
 	}
 }
@@ -172,7 +223,7 @@ func (cfg *TekuConfig) GetName() string {
 	return "Teku"
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *TekuConfig) GetConfigTitle() string {
 	return cfg.Title
 }

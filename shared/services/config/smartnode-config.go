@@ -3,23 +3,32 @@ package config
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
+
 	"github.com/rocket-pool/smartnode/shared"
 	"github.com/rocket-pool/smartnode/shared/types/config"
 )
 
 // Constants
 const (
-	smartnodeTag                       string = "rocketpool/smartnode:v" + shared.RocketPoolVersion
-	pruneProvisionerTag                string = "rocketpool/eth1-prune-provision:v0.0.1"
-	ecMigratorTag                      string = "rocketpool/ec-migrator:v1.0.0"
-	NetworkID                          string = "network"
-	ProjectNameID                      string = "projectName"
-	SnapshotID                         string = "rocketpool-dao.eth"
-	RewardsTreeFilenameFormat          string = "rp-rewards-%s-%d.json"
-	MinipoolPerformanceFilenameFormat  string = "rp-minipool-performance-%s-%d.json"
+	smartnodeTagPrefix string = "rocketpool/smartnode:v"
+	NetworkID          string = "network"
+	ProjectNameID      string = "projectName"
+	SnapshotID         string = "rocketpool-dao.eth"
+
+	kurtosisDevnetChainIDDefault               uint   = 3151908
+	kurtosisDevnetStorageAddressDefault        string = "0xb4B46bdAA835F8E4b4d8e208B6559cD267851051"
+	kurtosisDevnetRplAddressDefault            string = "0x2b45cD38B213Bbd3A1A848bf2467927c976877Cb"
+	kurtosisDevnetRethAddressDefault           string = "0x80741a37E3644612F0465145C9709a90B6D77Ee3"
+	kurtosisDevnetMulticallAddressDefault      string = "0x2f06c1dA6987BfD39A0539c03F9274fFb1F5fa19"
+	kurtosisDevnetBalanceBatcherAddressDefault string = "0x1a0E9eF9Cc41f4CcD377979C0e6DC8dBe4E2858C"
+	kurtosisDevnetSignerRegistryAddressDefault string = "0x8f22b1Cd26efe83ADf8Da87789fB66EeD917FCAa"
+	kurtosisDevnetRplTwapPoolAddressDefault    string = "0xdF321a81D594c6eD056E0DC3CB74AAEE4DcD91Fb"
+
+	rewardsTreeFilenameFormat          string = "rp-rewards-%s-%d%s"
+	minipoolPerformanceFilenameFormat  string = "rp-minipool-performance-%s-%d%s"
+	performanceFilenameFormat          string = "rp-performance-%s-%d%s"
 	RewardsTreeIpfsExtension           string = ".zst"
 	RewardsTreesFolder                 string = "rewards-trees"
 	ChecksumTableFilename              string = "checksums.sha384"
@@ -31,16 +40,30 @@ const (
 	PrimaryRewardsFileUrl              string = "https://%s.ipfs.dweb.link/%s"
 	SecondaryRewardsFileUrl            string = "https://ipfs.io/ipfs/%s/%s"
 	GithubRewardsFileUrl               string = "https://github.com/rocket-pool/rewards-trees/raw/main/%s/%s"
-	FeeRecipientFilename               string = "rp-fee-recipient.txt"
+	GlobalFeeRecipientFilename         string = "rp-fee-recipient.txt"
 	NativeFeeRecipientFilename         string = "rp-fee-recipient-env.txt"
+	PerKeyFeeRecipientFilename         string = "rp-fee-recipient-per-key"
 )
 
 // Defaults
 const (
 	defaultProjectName       string = "rocketpool"
-	WatchtowerMaxFeeDefault  uint64 = 200
-	WatchtowerPrioFeeDefault uint64 = 3
+	WatchtowerMaxFeeDefault  uint64 = 30
+	WatchtowerPrioFeeDefault uint64 = 1
 )
+
+type RewardsExtension string
+
+const (
+	RewardsExtensionJSON RewardsExtension = ".json"
+	RewardsExtensionSSZ  RewardsExtension = ".ssz"
+)
+
+// Contract addresses for multicall / network state manager
+type StateManagerContracts struct {
+	Multicaller    common.Address
+	BalanceBatcher common.Address
+}
 
 // Configuration for the Smartnode
 type SmartnodeConfig struct {
@@ -95,20 +118,14 @@ type SmartnodeConfig struct {
 	// Manual override for the watchtower's priority fee
 	WatchtowerPrioFeeOverride config.Parameter `yaml:"watchtowerPrioFeeOverride,omitempty"`
 
-	// The toggle for rolling records
-	UseRollingRecords config.Parameter `yaml:"useRollingRecords,omitempty"`
-
-	// The rolling record checkpoint interval
-	RecordCheckpointInterval config.Parameter `yaml:"recordCheckpointInterval,omitempty"`
-
-	// The checkpoint retention limit
-	CheckpointRetentionLimit config.Parameter `yaml:"checkpointRetentionLimit,omitempty"`
-
-	// The path of the records folder where snapshots of rolling record info is stored during a rewards interval
-	RecordsPath config.Parameter `yaml:"recordsPath,omitempty"`
-
 	// The toggle for enabling pDAO proposal verification duties
 	VerifyProposals config.Parameter `yaml:"verifyProposals,omitempty"`
+
+	// Delay for automatic queue assignment
+	AutoAssignmentDelay config.Parameter `yaml:"autoAssignmentDelay,omitempty"`
+
+	// Port for the node's HTTP API webserver
+	APIPort config.Parameter `yaml:"apiPort,omitempty"`
 
 	///////////////////////////
 	// Non-editable settings //
@@ -117,8 +134,8 @@ type SmartnodeConfig struct {
 	// The URL to provide the user so they can follow pending transactions
 	txWatchUrl map[config.Network]string `yaml:"-"`
 
-	// The URL to use for staking rETH
-	stakeUrl map[config.Network]string `yaml:"-"`
+	// The URL to use for the node management interface
+	nodeManagerUrl map[config.Network]string `yaml:"-"`
 
 	// The map of networks to execution chain IDs
 	chainID map[config.Network]uint `yaml:"-"`
@@ -131,9 +148,6 @@ type SmartnodeConfig struct {
 
 	// The contract address of the RPL token
 	rplTokenAddress map[config.Network]string `yaml:"-"`
-
-	// The contract address for Snapshot delegation
-	snapshotDelegationAddress map[config.Network]string `yaml:"-"`
 
 	// The Snapshot API domain
 	snapshotApiDomain map[config.Network]string `yaml:"-"`
@@ -215,9 +229,12 @@ type SmartnodeConfig struct {
 
 	// The FlashBots Protect RPC endpoint
 	flashbotsProtectUrl map[config.Network]string `yaml:"-"`
+
+	// The Flashbots relay URL for eth_sendBundle / bundle operations (distinct from Protect RPC)
+	flashbotsRelayUrl map[config.Network]string `yaml:"-"`
 }
 
-// Generates a new Smartnode configuration
+// Generates a newSmart Node configuration
 func NewSmartnodeConfig(cfg *RocketPoolConfig) *SmartnodeConfig {
 
 	return &SmartnodeConfig{
@@ -227,10 +244,10 @@ func NewSmartnodeConfig(cfg *RocketPoolConfig) *SmartnodeConfig {
 		ProjectName: config.Parameter{
 			ID:                 ProjectNameID,
 			Name:               "Project Name",
-			Description:        "This is the prefix that will be attached to all of the Docker containers managed by the Smartnode.",
+			Description:        "This is the prefix that will be attached to all of the Docker containers managed by the Smart Node.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: defaultProjectName},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Eth1, config.ContainerID_Eth2, config.ContainerID_Validator, config.ContainerID_Grafana, config.ContainerID_Prometheus, config.ContainerID_Exporter},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Eth1, config.ContainerID_Eth2, config.ContainerID_Validator, config.ContainerID_Grafana, config.ContainerID_Prometheus, config.ContainerID_Exporter},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
@@ -241,7 +258,7 @@ func NewSmartnodeConfig(cfg *RocketPoolConfig) *SmartnodeConfig {
 			Description:        "The absolute path of the `data` folder that contains your node wallet's encrypted file, the password for your node wallet, and all of the validator keys for your minipools. You may use environment variables in this string.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: getDefaultDataDir(cfg)},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Validator},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Validator},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
@@ -260,10 +277,10 @@ func NewSmartnodeConfig(cfg *RocketPoolConfig) *SmartnodeConfig {
 		Network: config.Parameter{
 			ID:                 NetworkID,
 			Name:               "Network",
-			Description:        "The Ethereum network you want to use - select Holesky Testnet to practice with fake ETH, or Mainnet to stake on the real network using real ETH.",
+			Description:        "The Ethereum network you want to use - select Hoodi Testnet to practice with fake ETH, or Mainnet to stake on the real network using real ETH.",
 			Type:               config.ParameterType_Choice,
 			Default:            map[config.Network]interface{}{config.Network_All: config.Network_Mainnet},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Eth1, config.ContainerID_Eth2, config.ContainerID_Validator},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Eth1, config.ContainerID_Eth2, config.ContainerID_Validator},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 			Options:            getNetworkOptions(),
@@ -272,7 +289,7 @@ func NewSmartnodeConfig(cfg *RocketPoolConfig) *SmartnodeConfig {
 		ManualMaxFee: config.Parameter{
 			ID:                 "manualMaxFee",
 			Name:               "Manual Max Fee",
-			Description:        "Set this if you want all of the Smartnode's transactions to use this specific max fee value (in gwei), which is the most you'd be willing to pay (*including the priority fee*).\n\nA value of 0 will show you the current suggested max fee based on the current network conditions and let you specify it each time you do a transaction.\n\nAny other value will ignore the recommended max fee and explicitly use this value instead.\n\nThis applies to automated transactions (such as claiming RPL and staking minipools) as well.",
+			Description:        "Set this if you want all of the Smart Node's transactions to use this specific max fee value (in gwei), which is the most you'd be willing to pay (*including the priority fee*).\n\nA value of 0 will show you the current suggested max fee based on the current network conditions and let you specify it each time you do a transaction.\n\nAny other value will ignore the recommended max fee and explicitly use this value instead.\n\nThis applies to automated transactions (such as claiming RPL and staking minipools) as well.",
 			Type:               config.ParameterType_Float,
 			Default:            map[config.Network]interface{}{config.Network_All: float64(0)},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Watchtower},
@@ -294,7 +311,7 @@ func NewSmartnodeConfig(cfg *RocketPoolConfig) *SmartnodeConfig {
 		AutoTxGasThreshold: config.Parameter{
 			ID:   "minipoolStakeGasThreshold",
 			Name: "Automatic TX Gas Threshold",
-			Description: "Occasionally, the Smartnode will attempt to perform some automatic transactions (such as the second `stake` transaction to finish launching a minipool or the `reduce bond` transaction to convert a 16-ETH minipool to an 8-ETH one). During these, your node will use the `Rapid` suggestion from the gas estimator as its max fee.\n\nThis threshold is a limit (in gwei) you can put on that suggestion; your node will not `stake` the new minipool until the suggestion is below this limit.\n\n" +
+			Description: "Occasionally, the Smart Node will attempt to perform some automatic transactions (such as the second `stake` transaction to finish launching a minipool or the `reduce bond` transaction to convert a 16-ETH minipool to an 8-ETH one). During these, your node will use the `Rapid` suggestion from the gas estimator as its max fee.\n\nThis threshold is a limit (in gwei) you can put on that suggestion; your node will not `stake` the new minipool until the suggestion is below this limit.\n\n" +
 				"A value of 0 will disable non-essential automatic transactions (such as minipool balance distribution and bond reduction), but essential transactions (such as minipool staking and solo migration promotion) will not be disabled.\n\n" +
 				"NOTE: the node will ignore this limit and automatically execute transactions at whatever the suggested fee happens to be once too much time has passed since those transactions were first eligible. You may end up paying more than you wanted to if you set this too low!",
 			Type:               config.ParameterType_Float,
@@ -307,7 +324,7 @@ func NewSmartnodeConfig(cfg *RocketPoolConfig) *SmartnodeConfig {
 		DistributeThreshold: config.Parameter{
 			ID:                 "distributeThreshold",
 			Name:               "Auto-Distribute Threshold",
-			Description:        "The Smartnode will regularly check the balance of each of your minipools on the Execution Layer (**not** the Beacon Chain).\nIf any of them have a balance greater than this threshold (in ETH), the Smartnode will automatically distribute the balance. This will send your share of the balance to your withdrawal address.\n\nMust be less than 8 ETH.\n\nSet this to 0 to disable automatic distributes.\n[orange]WARNING: if you disable automatic distribution, you **must** ensure you distribute your minipool's balance before it reaches 8 ETH or you will no longer be able to distribute your rewards until you exit the minipool!",
+			Description:        "The Smart Node will regularly check the balance of each of your minipools on the Execution Layer (**not** the Beacon Chain).\nIf any of them have a balance greater than this threshold (in ETH), the Smart Node will automatically distribute the balance. This will send your share of the balance to your withdrawal address.\n\nMust be less than 8 ETH.\n\nSet this to 0 to disable automatic distributes.\n[orange]WARNING: if you disable automatic distribution, you **must** ensure you distribute your minipool's balance before it reaches 8 ETH or you will no longer be able to distribute your rewards until you exit the minipool!",
 			Type:               config.ParameterType_Float,
 			Default:            map[config.Network]interface{}{config.Network_All: float64(1)},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Node},
@@ -318,9 +335,20 @@ func NewSmartnodeConfig(cfg *RocketPoolConfig) *SmartnodeConfig {
 		VerifyProposals: config.Parameter{
 			ID:                 "verifyProposals",
 			Name:               "Enable PDAO Proposal Checker",
-			Description:        "Check this box to opt into the responsibility for verifying Protocol DAO proposals once the Houston upgrade has been activated. Your node will regularly check for new proposals, verify their correctness, and submit challenges to any that do not match the on-chain data (e.g., if someone tampered with voting power and attempted to cheat).\n\nTo learn more about the PDAO proposal checking duty, including requirements and RPL bonding, please see the documentation at https://docs.rocketpool.net/guides/houston/pdao#challenge-process.",
+			Description:        "Check this box to opt into the responsibility for verifying Protocol DAO proposals once the Houston upgrade has been activated. Your node will regularly check for new proposals, verify their correctness, and submit challenges to any that do not match the on-chain data (e.g., if someone tampered with voting power and attempted to cheat).\n\nTo learn more about the PDAO proposal checking duty, including requirements and RPL bonding, please see the documentation at https://docs.rocketpool.net/pdao#challenge-process.",
 			Type:               config.ParameterType_Bool,
 			Default:            map[config.Network]interface{}{config.Network_All: false},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node},
+			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
+		},
+
+		AutoAssignmentDelay: config.Parameter{
+			ID:                 "autoAssignmentDelay",
+			Name:               "Automatic queue assignment delay",
+			Description:        "The Smart Node will periodically check whether its megapool is next in the queue. It will wait for the number of hours specified by this parameter after the last assignment before performing the assignment automatically.\n\n",
+			Type:               config.ParameterType_Uint16,
+			Default:            map[config.Network]interface{}{config.Network_All: uint16(48)},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Node},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
@@ -360,7 +388,7 @@ func NewSmartnodeConfig(cfg *RocketPoolConfig) *SmartnodeConfig {
 		RewardsTreeCustomUrl: config.Parameter{
 			ID:                 "rewardsTreeCustomUrl",
 			Name:               "Rewards Tree Custom Download URLs",
-			Description:        "The Smartnode will automatically download missing rewards tree files from trusted sources like IPFS and Rocket Pool's repository on GitHub. Use this field if you would like to manually specify additional sources that host the rewards tree files, so the Smartnode can download from them as well.\nMultiple URLs can be provided using ';' as separator).\n\nUse '%s' to specify the location of the rewards file name in the URL - for example: `https://my-cool-domain.com/rewards-trees/mainnet/%s`.",
+			Description:        "The Smart Node will automatically download missing rewards tree files from trusted sources like IPFS and Rocket Pool's repository on GitHub. Use this field if you would like to manually specify additional sources that host the rewards tree files, so the Smart Node can download from them as well.\nMultiple URLs can be provided using ';' as separator).\n\nUse '%s' to specify the location of the rewards file name in the URL - for example: `https://my-cool-domain.com/rewards-trees/mainnet/%s`.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Watchtower},
@@ -401,259 +429,226 @@ func NewSmartnodeConfig(cfg *RocketPoolConfig) *SmartnodeConfig {
 			OverwriteOnUpgrade: true,
 		},
 
-		UseRollingRecords: config.Parameter{
-			ID:                 "useRollingRecords",
-			Name:               "Use Rolling Records",
-			Description:        "[orange]**WARNING: EXPERIMENTAL**\n\n[white]Enable this to use the new rolling records feature, which stores attestation records for the entire Rocket Pool network in real time instead of collecting them all after a rewards period during tree generation.\n\nOnly useful for the Oracle DAO, or if you generate your own rewards trees.",
-			Type:               config.ParameterType_Bool,
-			Default:            map[config.Network]interface{}{config.Network_All: false},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Watchtower},
-			CanBeBlank:         false,
-			OverwriteOnUpgrade: false,
-		},
-
-		RecordCheckpointInterval: config.Parameter{
-			ID:                 "recordCheckpointInterval",
-			Name:               "Record Checkpoint Interval",
-			Description:        "The number of epochs that should pass before saving a new rolling record checkpoint. Used if Rolling Records is enabled.\n\nOnly useful for the Oracle DAO, or if you generate your own rewards trees.",
-			Type:               config.ParameterType_Uint,
-			Default:            map[config.Network]interface{}{config.Network_All: uint64(45)},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Watchtower},
-			CanBeBlank:         false,
-			OverwriteOnUpgrade: false,
-		},
-
-		CheckpointRetentionLimit: config.Parameter{
-			ID:                 "checkpointRetentionLimit",
-			Name:               "Checkpoint Retention Limit",
-			Description:        "The number of checkpoint files to save on-disk before pruning old ones. Used if Rolling Records is enabled.\n\nOnly useful for the Oracle DAO, or if you generate your own rewards trees.",
-			Type:               config.ParameterType_Uint,
-			Default:            map[config.Network]interface{}{config.Network_All: uint64(200)},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Watchtower},
-			CanBeBlank:         false,
-			OverwriteOnUpgrade: false,
-		},
-
-		RecordsPath: config.Parameter{
-			ID:                 "recordsPath",
-			Name:               "Records Path",
-			Description:        "The path of the folder to store rolling record checkpoints in during a rewards interval. Used if Rolling Records is enabled.\n\nOnly useful if you're an Oracle DAO member, or if you generate your own rewards trees.",
-			Type:               config.ParameterType_String,
-			Default:            map[config.Network]interface{}{config.Network_All: getDefaultRecordsDir(cfg)},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Watchtower},
+		APIPort: config.Parameter{
+			ID:                 "apiPort",
+			Name:               "API Port",
+			Description:        "The port your Smartnode's HTTP API server should listen on.",
+			Type:               config.ParameterType_Uint16,
+			Default:            map[config.Network]interface{}{config.Network_All: uint16(8280)},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
 
 		txWatchUrl: map[config.Network]string{
 			config.Network_Mainnet: "https://etherscan.io/tx",
-			config.Network_Devnet:  "https://holesky.etherscan.io/tx",
-			config.Network_Holesky: "https://holesky.etherscan.io/tx",
+			config.Network_Devnet:  "",
+			config.Network_Testnet: "https://hoodi.etherscan.io/tx",
 		},
 
-		stakeUrl: map[config.Network]string{
-			config.Network_Mainnet: "https://stake.rocketpool.net",
-			config.Network_Devnet:  "TBD",
-			config.Network_Holesky: "https://testnet.rocketpool.net",
+		nodeManagerUrl: map[config.Network]string{
+			config.Network_Mainnet: "https://node.rocketpool.net",
+			config.Network_Devnet:  "",
+			config.Network_Testnet: "https://testnet.node.rocketpool.net",
 		},
 
 		chainID: map[config.Network]uint{
-			config.Network_Mainnet: 1,     // Mainnet
-			config.Network_Devnet:  17000, // Also Holesky
-			config.Network_Holesky: 17000, // Holesky
+			config.Network_Mainnet: 1,                            // Mainnet
+			config.Network_Devnet:  kurtosisDevnetChainIDDefault, // Kurtosis ethereum-package (was Hoodi)
+			config.Network_Testnet: 560048,                       // Hoodi
 		},
 
 		storageAddress: map[config.Network]string{
 			config.Network_Mainnet: "0x1d8f8f00cfa6758d7bE78336684788Fb0ee0Fa46",
-			config.Network_Devnet:  "0xf04de123993761Bb9F08c9C39112b0E0b0eccE50",
-			config.Network_Holesky: "0x594Fb75D3dc2DFa0150Ad03F99F97817747dd4E1",
+			config.Network_Devnet:  kurtosisDevnetStorageAddressDefault,
+			config.Network_Testnet: "0x594Fb75D3dc2DFa0150Ad03F99F97817747dd4E1",
 		},
 
 		rocketSignerRegistryAddress: map[config.Network]string{
 			config.Network_Mainnet: "0xc1062617d10Ae99E09D941b60746182A87eAB38F",
-			config.Network_Devnet:  "",
-			config.Network_Holesky: "0x657FDE6B4764E26A81A323dbb79791A11B90dD91",
+			config.Network_Devnet:  kurtosisDevnetSignerRegistryAddressDefault,
+			config.Network_Testnet: "0xE3FbfaD4A11777E6271921E7EC1A5a1345684F4E",
 		},
 
 		rplTokenAddress: map[config.Network]string{
 			config.Network_Mainnet: "0xD33526068D116cE69F19A9ee46F0bd304F21A51f",
-			config.Network_Devnet:  "0x59A1a7AebCbF103B3C4f85261fbaC166117E1979",
-			config.Network_Holesky: "0x1Cc9cF5586522c6F483E84A19c3C2B0B6d027bF0",
+			config.Network_Devnet:  kurtosisDevnetRplAddressDefault,
+			config.Network_Testnet: "0x1Cc9cF5586522c6F483E84A19c3C2B0B6d027bF0",
 		},
 
 		rethAddress: map[config.Network]string{
 			config.Network_Mainnet: "0xae78736Cd615f374D3085123A210448E74Fc6393",
-			config.Network_Devnet:  "0x4be7161080b5d890500194cee2c40B1428002Bd3",
-			config.Network_Holesky: "0x7322c24752f79c05FFD1E2a6FCB97020C1C264F1",
+			config.Network_Devnet:  kurtosisDevnetRethAddressDefault,
+			config.Network_Testnet: "0x7322c24752f79c05FFD1E2a6FCB97020C1C264F1",
 		},
 
 		v1_0_0_RewardsPoolAddress: map[config.Network]string{
 			config.Network_Mainnet: "0xA3a18348e6E2d3897B6f2671bb8c120e36554802",
-			config.Network_Devnet:  "0x4A1b5Ab9F6C36E7168dE5F994172028Ca8554e02",
-			config.Network_Holesky: "",
+			config.Network_Devnet:  "",
+			config.Network_Testnet: "",
 		},
 
 		v1_0_0_ClaimNodeAddress: map[config.Network]string{
 			config.Network_Mainnet: "0x899336A2a86053705E65dB61f52C686dcFaeF548",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		v1_0_0_ClaimTrustedNodeAddress: map[config.Network]string{
 			config.Network_Mainnet: "0x6af730deB0463b432433318dC8002C0A4e9315e8",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		v1_0_0_MinipoolManagerAddress: map[config.Network]string{
 			config.Network_Mainnet: "0x6293B8abC1F36aFB22406Be5f96D893072A8cF3a",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		v1_1_0_NetworkPricesAddress: map[config.Network]string{
 			config.Network_Mainnet: "0xd3f500F550F46e504A4D2153127B47e007e11166",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		v1_1_0_NodeStakingAddress: map[config.Network]string{
 			config.Network_Mainnet: "0x0d8D8f8541B12A0e1194B7CC4b6D954b90AB82ec",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		v1_1_0_NodeDepositAddress: map[config.Network]string{
 			config.Network_Mainnet: "0x1Cc9cF5586522c6F483E84A19c3C2B0B6d027bF0",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		v1_1_0_MinipoolQueueAddress: map[config.Network]string{
 			config.Network_Mainnet: "0x5870dA524635D1310Dc0e6F256Ce331012C9C19E",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		v1_1_0_MinipoolFactoryAddress: map[config.Network]string{
 			config.Network_Mainnet: "0x54705f80D7C51Fcffd9C659ce3f3C9a7dCCf5788",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		v1_2_0_NetworkPricesAddress: map[config.Network]string{
 			config.Network_Mainnet: "0x751826b107672360b764327631cC5764515fFC37",
-			config.Network_Devnet:  "0xBba3FBCD4Bdbfc79118B1B31218602E5A71B426c",
-			config.Network_Holesky: "0x029d946F28F93399a5b0D09c879FC8c94E596AEb",
+			config.Network_Devnet:  "",
+			config.Network_Testnet: "",
 		},
 
 		v1_2_0_NetworkBalancesAddress: map[config.Network]string{
 			config.Network_Mainnet: "0x07FCaBCbe4ff0d80c2b1eb42855C0131b6cba2F4",
-			config.Network_Devnet:  "0xBe8Dc8CA5f339c196Aef634DfcDFbA61E30DC743",
-			config.Network_Holesky: "0x9294Fc6F03c64Cc217f5BE8697EA3Ed2De77e2F8",
-		},
-
-		snapshotDelegationAddress: map[config.Network]string{
-			config.Network_Mainnet: "0x469788fE6E9E9681C6ebF3bF78e7Fd26Fc015446",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		snapshotApiDomain: map[config.Network]string{
 			config.Network_Mainnet: "hub.snapshot.org",
-			config.Network_Devnet:  "",
-			config.Network_Holesky: "hub.snapshot.org",
+			config.Network_Devnet:  "hub.snapshot.org",
+			config.Network_Testnet: "hub.snapshot.org",
 		},
 
 		previousRewardsPoolAddresses: map[config.Network][]common.Address{
 			config.Network_Mainnet: {
 				common.HexToAddress("0x594Fb75D3dc2DFa0150Ad03F99F97817747dd4E1"),
 				common.HexToAddress("0xA805d68b61956BC92d556F2bE6d18747adAeEe82"),
+				common.HexToAddress("0xEE4d2A71cF479e0D3d0c3c2C923dbfEB57E73111"),
 			},
-			config.Network_Devnet: {
-				common.HexToAddress("0x4d581a552490fb6fce5F978e66560C8b7E481818"),
-			},
-			config.Network_Holesky: {
+			// Fresh private deploy — no legacy rewards pool history.
+			config.Network_Devnet: {},
+			config.Network_Testnet: {
 				common.HexToAddress("0x4a625C617a44E60F74E3fe3bf6d6333b63766e91"),
 			},
 		},
 
 		previousRocketDAOProtocolVerifier: map[config.Network][]common.Address{
-			config.Network_Mainnet: {},
+			config.Network_Mainnet: {
+				common.HexToAddress("0xd1f7e573cdC64FC0B201ca37aB50bC7Dd880040A"),
+			},
 			config.Network_Devnet:  {},
-			config.Network_Holesky: {},
+			config.Network_Testnet: {},
 		},
 
 		optimismPriceMessengerAddress: map[config.Network]string{
-			config.Network_Mainnet: "0x16d468E69Dbb67Fb924a4c61D7D35F81d1B27A3F",
+			config.Network_Mainnet: "0x12759f8Df234f8f2cDdb3d2Ed5604adF9ACCfc9F",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		polygonPriceMessengerAddress: map[config.Network]string{
 			config.Network_Mainnet: "0xb1029Ac2Be4e08516697093e2AFeC435057f3511",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		arbitrumPriceMessengerAddress: map[config.Network]string{
 			config.Network_Mainnet: "0x05330300f829AD3fC8f33838BC88CFC4093baD53",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		arbitrumPriceMessengerAddressV2: map[config.Network]string{
 			config.Network_Mainnet: "0x312FcFB03eC9B1Ea38CB7BFCd26ee7bC3b505aB1",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		zkSyncEraPriceMessengerAddress: map[config.Network]string{
 			config.Network_Mainnet: "0x6cf6CB29754aEBf88AF12089224429bD68b0b8c8",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		basePriceMessengerAddress: map[config.Network]string{
-			config.Network_Mainnet: "0x64A5856869C06B0188C84A5F83d712bbAc03517d",
+			config.Network_Mainnet: "0x8aa4afc5a9793433eb37c9919ff49b54903c7cb1",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		scrollPriceMessengerAddress: map[config.Network]string{
 			config.Network_Mainnet: "0x0f22dc9b9c03757d4676539203d7549c8f22c15c",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		scrollFeeEstimatorAddress: map[config.Network]string{
 			config.Network_Mainnet: "0x0d7E906BD9cAFa154b048cFa766Cc1E54E39AF9B",
 			config.Network_Devnet:  "",
-			config.Network_Holesky: "",
+			config.Network_Testnet: "",
 		},
 
 		rplTwapPoolAddress: map[config.Network]string{
 			config.Network_Mainnet: "0xe42318ea3b998e8355a3da364eb9d48ec725eb45",
-			config.Network_Devnet:  "0x7bb10d2a3105ed5cc150c099a06cafe43d8aa15d",
-			config.Network_Holesky: "0x7bb10d2a3105ed5cc150c099a06cafe43d8aa15d",
+			config.Network_Devnet:  kurtosisDevnetRplTwapPoolAddressDefault,
+			config.Network_Testnet: "0x0ca239d8AC5E49E3203d60eaf86Baa6712E5b454",
 		},
 
 		multicallAddress: map[config.Network]string{
 			config.Network_Mainnet: "0x5BA1e12693Dc8F9c48aAD8770482f4739bEeD696",
-			config.Network_Devnet:  "0x0540b786f03c9491f3a2ab4b0e3ae4ecd4f63ce7",
-			config.Network_Holesky: "0x0540b786f03c9491f3a2ab4b0e3ae4ecd4f63ce7",
+			config.Network_Devnet:  kurtosisDevnetMulticallAddressDefault,
+			config.Network_Testnet: "0xc5fA61aA6Ec012d1A2Ea38f31ADAf4D06c8725E7",
 		},
 
 		balancebatcherAddress: map[config.Network]string{
 			config.Network_Mainnet: "0xb1f8e55c7f64d203c1400b9d8555d050f94adf39",
-			config.Network_Devnet:  "0xfAa2e7C84eD801dd9D27Ac1ed957274530796140",
-			config.Network_Holesky: "0xfAa2e7C84eD801dd9D27Ac1ed957274530796140",
+			config.Network_Devnet:  kurtosisDevnetBalanceBatcherAddressDefault,
+			config.Network_Testnet: "0xB80b500CF68a956b6f149F1C48E8F07EEF4486Ce",
 		},
 
 		flashbotsProtectUrl: map[config.Network]string{
 			config.Network_Mainnet: "https://rpc.flashbots.net/",
-			config.Network_Devnet:  "https://rpc-holesky.flashbots.net/",
-			config.Network_Holesky: "",
+			config.Network_Devnet:  "",
+			config.Network_Testnet: "https://rpc-hoodi.flashbots.net/",
+		},
+
+		flashbotsRelayUrl: map[config.Network]string{
+			config.Network_Mainnet: "https://relay.flashbots.net",
 		},
 	}
 
@@ -670,16 +665,14 @@ func (cfg *SmartnodeConfig) GetParameters() []*config.Parameter {
 		&cfg.AutoTxGasThreshold,
 		&cfg.DistributeThreshold,
 		&cfg.VerifyProposals,
+		&cfg.AutoAssignmentDelay,
 		&cfg.RewardsTreeMode,
 		&cfg.PriceBalanceSubmissionReferenceTimestamp,
 		&cfg.RewardsTreeCustomUrl,
 		&cfg.ArchiveECUrl,
 		&cfg.WatchtowerMaxFeeOverride,
 		&cfg.WatchtowerPrioFeeOverride,
-		&cfg.UseRollingRecords,
-		&cfg.RecordCheckpointInterval,
-		&cfg.CheckpointRetentionLimit,
-		&cfg.RecordsPath,
+		&cfg.APIPort,
 	}
 }
 
@@ -689,8 +682,8 @@ func (cfg *SmartnodeConfig) GetTxWatchUrl() string {
 	return cfg.txWatchUrl[cfg.Network.Value.(config.Network)]
 }
 
-func (cfg *SmartnodeConfig) GetStakeUrl() string {
-	return cfg.stakeUrl[cfg.Network.Value.(config.Network)]
+func (cfg *SmartnodeConfig) GetNodeManagerUrl() string {
+	return cfg.nodeManagerUrl[cfg.Network.Value.(config.Network)]
 }
 
 func (cfg *SmartnodeConfig) GetChainID() uint {
@@ -711,6 +704,14 @@ func (cfg *SmartnodeConfig) GetPasswordPath() string {
 	}
 
 	return filepath.Join(DaemonDataPath, "password")
+}
+
+func (cfg *SmartnodeConfig) GetNodeAddressPath() string {
+	if cfg.parent.IsNativeMode {
+		return filepath.Join(cfg.DataPath.Value.(string), "address")
+	}
+
+	return filepath.Join(DaemonDataPath, "address")
 }
 
 func (cfg *SmartnodeConfig) GetValidatorKeychainPath() string {
@@ -749,9 +750,9 @@ func (cfg *SmartnodeConfig) GetValidatorKeychainPathInCLI() string {
 	return filepath.Join(cfg.DataPath.Value.(string), "validators")
 }
 
-func (config *SmartnodeConfig) GetWatchtowerStatePath() string {
-	if config.parent.IsNativeMode {
-		return filepath.Join(config.DataPath.Value.(string), WatchtowerFolder, "state.yml")
+func (cfg *SmartnodeConfig) GetWatchtowerStatePath() string {
+	if cfg.parent.IsNativeMode {
+		return filepath.Join(cfg.DataPath.Value.(string), WatchtowerFolder, "state.yml")
 	}
 
 	return filepath.Join(DaemonDataPath, WatchtowerFolder, "state.yml")
@@ -785,20 +786,8 @@ func (cfg *SmartnodeConfig) GetRplTokenAddress() string {
 	return cfg.rplTokenAddress[cfg.Network.Value.(config.Network)]
 }
 
-func (cfg *SmartnodeConfig) GetSnapshotDelegationAddress() string {
-	return cfg.snapshotDelegationAddress[cfg.Network.Value.(config.Network)]
-}
-
 func (cfg *SmartnodeConfig) GetSmartnodeContainerTag() string {
-	return smartnodeTag
-}
-
-func (config *SmartnodeConfig) GetPruneProvisionerContainerTag() string {
-	return pruneProvisionerTag
-}
-
-func (cfg *SmartnodeConfig) GetEcMigratorContainerTag() string {
-	return ecMigratorTag
+	return smartnodeTagPrefix + shared.RocketPoolVersion()
 }
 
 func (cfg *SmartnodeConfig) GetSnapshotApiDomain() string {
@@ -813,11 +802,11 @@ func (cfg *SmartnodeConfig) GetVotingSnapshotID() [32]byte {
 	return buffer
 }
 
-func (config *SmartnodeConfig) GetSnapshotID() string {
+func (cfg *SmartnodeConfig) GetSnapshotID() string {
 	return SnapshotID
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *SmartnodeConfig) GetConfigTitle() string {
 	return cfg.Title
 }
@@ -827,27 +816,56 @@ func (cfg *SmartnodeConfig) GetRethAddress() common.Address {
 }
 
 func getDefaultDataDir(config *RocketPoolConfig) string {
+	if config == nil {
+		// Handle tests. Eventually we'll refactor so this isn't necessary.
+		return ""
+	}
 	return filepath.Join(config.RocketPoolDirectory, "data")
 }
 
-func getDefaultRecordsDir(config *RocketPoolConfig) string {
-	return filepath.Join(getDefaultDataDir(config), "records")
-}
-
-func (cfg *SmartnodeConfig) GetRewardsTreePath(interval uint64, daemon bool) string {
+func (cfg *SmartnodeConfig) GetRewardsTreeDirectory(daemon bool) string {
 	if daemon && !cfg.parent.IsNativeMode {
-		return filepath.Join(DaemonDataPath, RewardsTreesFolder, fmt.Sprintf(RewardsTreeFilenameFormat, string(cfg.Network.Value.(config.Network)), interval))
+		return filepath.Join(DaemonDataPath, RewardsTreesFolder)
 	}
 
-	return filepath.Join(cfg.DataPath.Value.(string), RewardsTreesFolder, fmt.Sprintf(RewardsTreeFilenameFormat, string(cfg.Network.Value.(config.Network)), interval))
+	return filepath.Join(cfg.DataPath.Value.(string), RewardsTreesFolder)
+}
+
+func (cfg *SmartnodeConfig) formatRewardsFilename(f string, interval uint64, extension RewardsExtension) string {
+	return fmt.Sprintf(f, string(cfg.Network.Value.(config.Network)), interval, string(extension))
+}
+
+func (cfg *SmartnodeConfig) GetRewardsTreeFilename(interval uint64, extension RewardsExtension) string {
+	return cfg.formatRewardsFilename(rewardsTreeFilenameFormat, interval, extension)
+}
+
+func (cfg *SmartnodeConfig) GetMinipoolPerformanceFilename(interval uint64) string {
+	return cfg.formatRewardsFilename(minipoolPerformanceFilenameFormat, interval, RewardsExtensionJSON)
+}
+
+func (cfg *SmartnodeConfig) GetPerformanceFilename(interval uint64) string {
+	return cfg.formatRewardsFilename(performanceFilenameFormat, interval, RewardsExtensionJSON)
+}
+
+func (cfg *SmartnodeConfig) GetRewardsTreePath(interval uint64, daemon bool, extension RewardsExtension) string {
+	return filepath.Join(
+		cfg.GetRewardsTreeDirectory(daemon),
+		cfg.GetRewardsTreeFilename(interval, extension),
+	)
 }
 
 func (cfg *SmartnodeConfig) GetMinipoolPerformancePath(interval uint64, daemon bool) string {
-	if daemon && !cfg.parent.IsNativeMode {
-		return filepath.Join(DaemonDataPath, RewardsTreesFolder, fmt.Sprintf(MinipoolPerformanceFilenameFormat, string(cfg.Network.Value.(config.Network)), interval))
-	}
+	return filepath.Join(
+		cfg.GetRewardsTreeDirectory(daemon),
+		cfg.GetMinipoolPerformanceFilename(interval),
+	)
+}
 
-	return filepath.Join(cfg.DataPath.Value.(string), RewardsTreesFolder, fmt.Sprintf(MinipoolPerformanceFilenameFormat, string(cfg.Network.Value.(config.Network)), interval))
+func (cfg *SmartnodeConfig) GetPerformancePath(interval uint64) string {
+	return filepath.Join(
+		cfg.GetRewardsTreeDirectory(true),
+		cfg.GetPerformanceFilename(interval),
+	)
 }
 
 func (cfg *SmartnodeConfig) GetRegenerateRewardsTreeRequestPath(interval uint64, daemon bool) string {
@@ -866,12 +884,20 @@ func (cfg *SmartnodeConfig) GetWatchtowerFolder(daemon bool) string {
 	return filepath.Join(cfg.DataPath.Value.(string), WatchtowerFolder)
 }
 
-func (cfg *SmartnodeConfig) GetFeeRecipientFilePath() string {
+func (cfg *SmartnodeConfig) GetGlobalFeeRecipientFilePath() string {
 	if !cfg.parent.IsNativeMode {
-		return filepath.Join(DaemonDataPath, "validators", FeeRecipientFilename)
+		return filepath.Join(DaemonDataPath, "validators", GlobalFeeRecipientFilename)
 	}
 
 	return filepath.Join(cfg.DataPath.Value.(string), "validators", NativeFeeRecipientFilename)
+}
+
+func (cfg *SmartnodeConfig) GetPerKeyFeeRecipientFilePath() string {
+	if !cfg.parent.IsNativeMode {
+		return filepath.Join(DaemonDataPath, "validators", PerKeyFeeRecipientFilename)
+	}
+
+	return filepath.Join(cfg.DataPath.Value.(string), "validators", PerKeyFeeRecipientFilename)
 }
 
 func (cfg *SmartnodeConfig) GetV100RewardsPoolAddress() common.Address {
@@ -970,8 +996,20 @@ func (cfg *SmartnodeConfig) GetBalanceBatcherAddress() string {
 	return cfg.balancebatcherAddress[cfg.Network.Value.(config.Network)]
 }
 
+// Utility function to get the state manager contracts
+func (cfg *SmartnodeConfig) GetStateManagerContracts() StateManagerContracts {
+	return StateManagerContracts{
+		Multicaller:    common.HexToAddress(cfg.GetMulticallAddress()),
+		BalanceBatcher: common.HexToAddress(cfg.GetBalanceBatcherAddress()),
+	}
+}
+
 func (cfg *SmartnodeConfig) GetFlashbotsProtectUrl() string {
 	return cfg.flashbotsProtectUrl[cfg.Network.Value.(config.Network)]
+}
+
+func (cfg *SmartnodeConfig) GetFlashbotsRelayUrl() string {
+	return cfg.flashbotsRelayUrl[cfg.Network.Value.(config.Network)]
 }
 
 func getNetworkOptions() []config.ParameterOption {
@@ -981,18 +1019,15 @@ func getNetworkOptions() []config.ParameterOption {
 			Description: "This is the real Ethereum main network, using real ETH and real RPL to make real validators.",
 			Value:       config.Network_Mainnet,
 		}, {
-			Name:        "Holesky Testnet",
-			Description: "This is the Holešky (Holešovice) test network, which is the next generation of long-lived testnets for Ethereum. It uses free fake ETH and free fake RPL to make fake validators.\nUse this if you want to practice running the Smartnode in a free, safe environment before moving to Mainnet.",
-			Value:       config.Network_Holesky,
+			Name:        "Hoodi Testnet",
+			Description: "This is the Hoodi test network, which is the next generation of long-lived testnets for Ethereum. It uses free fake ETH and free fake RPL to make fake validators.\nUse this if you want to practice running the Smart Node in a free, safe environment before moving to Mainnet.",
+			Value:       config.Network_Testnet,
 		},
-	}
-
-	if strings.HasSuffix(shared.RocketPoolVersion, "-dev") {
-		options = append(options, config.ParameterOption{
+		{
 			Name:        "Devnet",
-			Description: "This is a development network used by Rocket Pool engineers to test new features and contract upgrades before they are promoted to a Testnet for staging. You should not use this network unless invited to do so by the developers.",
+			Description: "Rocket Pool development network. This is a local network that is used for development and testing. It uses free fake ETH and free fake RPL to make fake validators.",
 			Value:       config.Network_Devnet,
-		})
+		},
 	}
 
 	return options

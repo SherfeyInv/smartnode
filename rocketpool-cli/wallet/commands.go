@@ -1,27 +1,28 @@
 package wallet
 
 import (
-	"fmt"
+	"context"
 
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/color"
 )
 
 // Register commands
-func RegisterCommands(app *cli.App, name string, aliases []string) {
-	app.Commands = append(app.Commands, cli.Command{
+func RegisterCommands(app *cli.Command, name string, aliases []string) {
+	app.Commands = append(app.Commands, &cli.Command{
 		Name:    name,
 		Aliases: aliases,
 		Usage:   "Manage the node wallet",
-		Subcommands: []cli.Command{
+		Commands: []*cli.Command{
 
 			{
 				Name:      "status",
 				Aliases:   []string{"s"},
 				Usage:     "Get the node wallet status",
 				UsageText: "rocketpool wallet status",
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -29,7 +30,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return getStatus(c)
+					return getStatus()
 
 				},
 			},
@@ -40,20 +41,23 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Usage:     "Initialize the node wallet",
 				UsageText: "rocketpool wallet init [options]",
 				Flags: []cli.Flag{
-					cli.StringFlag{
-						Name:  "password, p",
-						Usage: "The password to secure the wallet with (if not already set)",
+					&cli.StringFlag{
+						Name:    "password",
+						Aliases: []string{"p"},
+						Usage:   "The password to secure the wallet with (if not already set)",
 					},
-					cli.BoolFlag{
-						Name:  "confirm-mnemonic, c",
-						Usage: "Automatically confirm the mnemonic phrase",
+					&cli.BoolFlag{
+						Name:    "confirm-mnemonic",
+						Aliases: []string{"c"},
+						Usage:   "Automatically confirm the mnemonic phrase",
 					},
-					cli.StringFlag{
-						Name:  "derivation-path, d",
-						Usage: "Specify the derivation path for the wallet.\nOmit this flag (or leave it blank) for the default of \"m/44'/60'/0'/0/%d\" (where %d is the index).\nSet this to \"ledgerLive\" to use Ledger Live's path of \"m/44'/60'/%d/0/0\".\nSet this to \"mew\" to use MyEtherWallet's path of \"m/44'/60'/0'/%d\".\nFor custom paths, simply enter them here.",
+					&cli.StringFlag{
+						Name:    "derivation-path",
+						Aliases: []string{"d"},
+						Usage:   "Specify the derivation path for the wallet.\nOmit this flag (or leave it blank) for the default of \"m/44'/60'/0'/0/%d\" (where %d is the index).\nSet this to \"ledgerLive\" to use Ledger Live's path of \"m/44'/60'/%d/0/0\".\nSet this to \"mew\" to use MyEtherWallet's path of \"m/44'/60'/0'/%d\".\nFor custom paths, simply enter them here.",
 					},
 				},
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -68,7 +72,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return initWallet(c)
+					return initWallet(c.String("password"), c.Bool("confirm-mnemonic"), c.String("derivation-path"), c.Root().Bool("secure-session"))
 
 				},
 			},
@@ -79,33 +83,44 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Usage:     "Recover a node wallet from a mnemonic phrase",
 				UsageText: "rocketpool wallet recover [options]",
 				Flags: []cli.Flag{
-					cli.StringFlag{
-						Name:  "password, p",
-						Usage: "The password to secure the wallet with (if not already set)",
+					&cli.StringFlag{
+						Name:    "password",
+						Aliases: []string{"p"},
+						Usage:   "The password to secure the wallet with (if not already set)",
 					},
-					cli.StringFlag{
-						Name:  "mnemonic, m",
-						Usage: "The mnemonic phrase to recover the wallet from",
+					&cli.StringFlag{
+						Name:    "mnemonic",
+						Aliases: []string{"m"},
+						Usage:   "The mnemonic phrase to recover the wallet from",
 					},
-					cli.BoolFlag{
-						Name:  "skip-validator-key-recovery, k",
-						Usage: "Recover the node wallet, but do not regenerate its validator keys",
+					&cli.BoolFlag{
+						Name:    "skip-validator-key-recovery",
+						Aliases: []string{"k"},
+						Usage:   "Recover the node wallet, but do not regenerate its validator keys",
 					},
-					cli.StringFlag{
-						Name:  "derivation-path, d",
-						Usage: "Specify the derivation path for the wallet.\nOmit this flag (or leave it blank) for the default of \"m/44'/60'/0'/0/%d\" (where %d is the index).\nSet this to \"ledgerLive\" to use Ledger Live's path of \"m/44'/60'/%d/0/0\".\nSet this to \"mew\" to use MyEtherWallet's path of \"m/44'/60'/0'/%d\".\nFor custom paths, simply enter them here.",
+					&cli.StringFlag{
+						Name:    "derivation-path",
+						Aliases: []string{"d"},
+						Usage:   "Specify the derivation path for the wallet.\nOmit this flag (or leave it blank) for the default of \"m/44'/60'/0'/0/%d\" (where %d is the index).\nSet this to \"ledgerLive\" to use Ledger Live's path of \"m/44'/60'/%d/0/0\".\nSet this to \"mew\" to use MyEtherWallet's path of \"m/44'/60'/0'/%d\".\nFor custom paths, simply enter them here.",
 					},
-					cli.UintFlag{
-						Name:  "wallet-index, i",
-						Usage: "Specify the index to use with the derivation path when recovering your wallet",
-						Value: 0,
+					&cli.Uint64Flag{
+						Name:    "wallet-index",
+						Aliases: []string{"i"},
+						Usage:   "Specify the index to use with the derivation path when recovering your wallet",
+						Value:   0,
 					},
-					cli.StringFlag{
-						Name:  "address, a",
-						Usage: "If you are recovering a wallet that was not generated by the Smartnode and don't know the derivation path or index of it, enter the address here. The Smartnode will search through its library of paths and indices to try to find it.",
+					&cli.StringFlag{
+						Name:    "address",
+						Aliases: []string{"a"},
+						Usage:   "If you are recovering a wallet that was not generated by the Smart Node and don't know the derivation path or index of it, enter the address here. the Smart Node will search through its library of paths and indices to try to find it.",
+					},
+					&cli.BoolFlag{
+						Name:    "yes",
+						Aliases: []string{"y"},
+						Usage:   "Automatically confirm the recovery",
 					},
 				},
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -125,7 +140,15 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return recoverWallet(c)
+					return recoverWallet(
+						c.String("password"),
+						c.String("mnemonic"),
+						c.String("address"),
+						c.Bool("skip-validator-key-recovery"),
+						c.String("derivation-path"),
+						uint(c.Uint64("wallet-index")),
+						c.Bool("yes"),
+					)
 
 				},
 			},
@@ -134,8 +157,15 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Name:      "rebuild",
 				Aliases:   []string{"b"},
 				Usage:     "Rebuild validator keystores from derived keys",
-				UsageText: "rocketpool wallet rebuild",
-				Action: func(c *cli.Context) error {
+				UsageText: "rocketpool wallet rebuild [options]",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:    "yes",
+						Aliases: []string{"y"},
+						Usage:   "Automatically confirm the rebuild",
+					},
+				},
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -143,7 +173,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return rebuildWallet(c)
+					return rebuildWallet(c.Bool("yes"))
 
 				},
 			},
@@ -154,29 +184,39 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Usage:     "Test recovering a node wallet without actually generating any of the node wallet or validator key files to ensure the process works as expected",
 				UsageText: "rocketpool wallet test-recovery [options]",
 				Flags: []cli.Flag{
-					cli.StringFlag{
-						Name:  "mnemonic, m",
-						Usage: "The mnemonic phrase to recover the wallet from",
+					&cli.StringFlag{
+						Name:    "mnemonic",
+						Aliases: []string{"m"},
+						Usage:   "The mnemonic phrase to recover the wallet from",
 					},
-					cli.BoolFlag{
-						Name:  "skip-validator-key-recovery, k",
-						Usage: "Recover the node wallet, but do not regenerate its validator keys",
+					&cli.BoolFlag{
+						Name:    "skip-validator-key-recovery",
+						Aliases: []string{"k"},
+						Usage:   "Recover the node wallet, but do not regenerate its validator keys",
 					},
-					cli.StringFlag{
-						Name:  "derivation-path, d",
-						Usage: "Specify the derivation path for the wallet.\nOmit this flag (or leave it blank) for the default of \"m/44'/60'/0'/0/%d\" (where %d is the index).\nSet this to \"ledgerLive\" to use Ledger Live's path of \"m/44'/60'/%d/0/0\".\nSet this to \"mew\" to use MyEtherWallet's path of \"m/44'/60'/0'/%d\".\nFor custom paths, simply enter them here.",
+					&cli.StringFlag{
+						Name:    "derivation-path",
+						Aliases: []string{"d"},
+						Usage:   "Specify the derivation path for the wallet.\nOmit this flag (or leave it blank) for the default of \"m/44'/60'/0'/0/%d\" (where %d is the index).\nSet this to \"ledgerLive\" to use Ledger Live's path of \"m/44'/60'/%d/0/0\".\nSet this to \"mew\" to use MyEtherWallet's path of \"m/44'/60'/0'/%d\".\nFor custom paths, simply enter them here.",
 					},
-					cli.UintFlag{
-						Name:  "wallet-index, i",
-						Usage: "Specify the index to use with the derivation path when recovering your wallet",
-						Value: 0,
+					&cli.Uint64Flag{
+						Name:    "wallet-index",
+						Aliases: []string{"i"},
+						Usage:   "Specify the index to use with the derivation path when recovering your wallet",
+						Value:   0,
 					},
-					cli.StringFlag{
-						Name:  "address, a",
-						Usage: "If you are recovering a wallet that was not generated by the Smartnode and don't know the derivation path or index of it, enter the address here. The Smartnode will search through its library of paths and indices to try to find it.",
+					&cli.StringFlag{
+						Name:    "address",
+						Aliases: []string{"a"},
+						Usage:   "If you are recovering a wallet that was not generated by the Smart Node and don't know the derivation path or index of it, enter the address here. the Smart Node will search through its library of paths and indices to try to find it.",
+					},
+					&cli.BoolFlag{
+						Name:    "yes",
+						Aliases: []string{"y"},
+						Usage:   "Automatically confirm the test",
 					},
 				},
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -191,7 +231,14 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return testRecovery(c)
+					return testRecovery(
+						c.String("mnemonic"),
+						c.String("address"),
+						c.Bool("skip-validator-key-recovery"),
+						c.String("derivation-path"),
+						uint(c.Uint64("wallet-index")),
+						c.Bool("yes"),
+					)
 
 				},
 			},
@@ -201,7 +248,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Aliases:   []string{"e"},
 				Usage:     "Export the node wallet in JSON format",
 				UsageText: "rocketpool wallet export",
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -209,7 +256,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return exportWallet(c)
+					return exportWallet(c.Root().Bool("secure-session"))
 
 				},
 			},
@@ -218,7 +265,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Aliases:   []string{"ens"},
 				Usage:     "Set a name to the node wallet's ENS reverse record",
 				UsageText: "rocketpool wallet set-ens-name name",
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -226,16 +273,16 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return setEnsName(c, c.Args().Get(0))
+					return setEnsName(c.Args().Get(0), c.Bool("yes"))
 
 				},
 			},
 
 			{
 				Name:      "purge",
-				Usage:     fmt.Sprintf("%sDeletes your node wallet, your validator keys, and restarts your Validator Client while preserving your chain data. WARNING: Only use this if you want to stop validating with this machine!%s", colorRed, colorReset),
+				Usage:     color.Red("Deletes your node wallet, your validator keys, and restarts your Validator Client while preserving your chain data. WARNING: Only use this if you want to stop validating with this machine!"),
 				UsageText: "rocketpool wallet purge",
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -243,7 +290,70 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return purge(c)
+					return purge(cliutils.Parent(c).StringSlice("compose-file"))
+
+				},
+			},
+
+			{
+				Name:      "masquerade",
+				Aliases:   []string{"m"},
+				Usage:     "Change your node's effective address to a different one. Your node will not be able to submit transactions or sign messages since you don't have the corresponding wallet's private key.",
+				UsageText: "rocketpool wallet m [options]",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:    "yes",
+						Aliases: []string{"y"},
+						Usage:   "Automatically confirm all interactive questions",
+					},
+					&cli.StringFlag{
+						Name:    "address",
+						Aliases: []string{"a"},
+						Usage:   "Specify an address you'd like you masquerade as",
+					},
+					&cli.BoolFlag{
+						Name:    "observe",
+						Aliases: []string{"o"},
+						Usage:   "Apply masquerade to the node and watchtower loops (requires daemon restart)",
+					},
+				},
+
+				Action: func(ctx context.Context, c *cli.Command) error {
+
+					// Validate args
+					if err := cliutils.ValidateArgCount(c, 0); err != nil {
+
+						return err
+					}
+
+					// Run
+					return masquerade(c.String("address"), c.Bool("yes"), c.Bool("observe"))
+
+				},
+			},
+
+			{
+				Name:      "end-masquerade",
+				Aliases:   []string{"em"},
+				Usage:     "End a masquerade, restoring your node's effective address back to your wallet address if one is loaded.",
+				UsageText: "rocketpool wallet end-masquerade [options]",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:    "yes",
+						Aliases: []string{"y"},
+						Usage:   "Automatically confirm all interactive questions",
+					},
+				},
+
+				Action: func(ctx context.Context, c *cli.Command) error {
+
+					// Validate args
+					if err := cliutils.ValidateArgCount(c, 0); err != nil {
+						return err
+					}
+
+					// Run
+					return endMasquerade(c.Bool("yes"))
 
 				},
 			},

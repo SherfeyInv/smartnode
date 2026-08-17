@@ -5,9 +5,9 @@ import (
 )
 
 const (
-	lodestarTagTest         string = "chainsafe/lodestar:v1.21.0"
-	lodestarTagProd         string = "chainsafe/lodestar:v1.21.0"
-	defaultLodestarMaxPeers uint16 = 100
+	lodestarTagTest         string = "chainsafe/lodestar:v1.46.0"
+	lodestarTagProd         string = "chainsafe/lodestar:v1.46.0"
+	defaultLodestarMaxPeers uint16 = 200
 )
 
 // Configuration for Lodestar
@@ -23,12 +23,18 @@ type LodestarConfig struct {
 	// The Docker Hub tag for Lighthouse
 	ContainerTag config.Parameter `yaml:"containerTag,omitempty"`
 
+	// The port to use for gossip traffic using the QUIC protocol
+	P2pQuicPort config.Parameter `yaml:"p2pQuicPort,omitempty"`
+
 	// Custom command line flags for the BN
 	AdditionalBnFlags config.Parameter `yaml:"additionalBnFlags,omitempty"`
 
 	// Custom command line flags for the VC
 	AdditionalVcFlags config.Parameter `yaml:"additionalVcFlags,omitempty"`
 }
+
+// Type assertion for LodestarConfig
+var _ config.ConsensusConfig = &LodestarConfig{}
 
 // Generates a new Lodestar configuration
 func NewLodestarConfig(cfg *RocketPoolConfig) *LodestarConfig {
@@ -46,6 +52,17 @@ func NewLodestarConfig(cfg *RocketPoolConfig) *LodestarConfig {
 			OverwriteOnUpgrade: false,
 		},
 
+		P2pQuicPort: config.Parameter{
+			ID:                 P2pQuicPortID,
+			Name:               "P2P QUIC Port",
+			Description:        "The port to use for P2P (blockchain) traffic using the QUIC protocol.",
+			Type:               config.ParameterType_Uint16,
+			Default:            map[config.Network]interface{}{config.Network_All: defaultP2pQuicPort},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2},
+			CanBeBlank:         false,
+			OverwriteOnUpgrade: false,
+		},
+
 		ContainerTag: config.Parameter{
 			ID:          "containerTag",
 			Name:        "Container Tag",
@@ -54,7 +71,7 @@ func NewLodestarConfig(cfg *RocketPoolConfig) *LodestarConfig {
 			Default: map[config.Network]interface{}{
 				config.Network_Mainnet: lodestarTagProd,
 				config.Network_Devnet:  lodestarTagTest,
-				config.Network_Holesky: lodestarTagTest,
+				config.Network_Testnet: lodestarTagTest,
 			},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2, config.ContainerID_Validator},
 			CanBeBlank:         false,
@@ -64,7 +81,7 @@ func NewLodestarConfig(cfg *RocketPoolConfig) *LodestarConfig {
 		AdditionalBnFlags: config.Parameter{
 			ID:                 "additionalBnFlags",
 			Name:               "Additional Beacon Client Flags",
-			Description:        "Additional custom command line flags you want to pass Lodestar's Beacon Client, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass Lodestar's Beacon Client, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth2},
@@ -75,7 +92,7 @@ func NewLodestarConfig(cfg *RocketPoolConfig) *LodestarConfig {
 		AdditionalVcFlags: config.Parameter{
 			ID:                 "additionalVcFlags",
 			Name:               "Additional Validator Client Flags",
-			Description:        "Additional custom command line flags you want to pass Lodestar's Validator Client, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass Lodestar's Validator Client, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Validator},
@@ -89,6 +106,7 @@ func NewLodestarConfig(cfg *RocketPoolConfig) *LodestarConfig {
 func (cfg *LodestarConfig) GetParameters() []*config.Parameter {
 	return []*config.Parameter{
 		&cfg.MaxPeers,
+		&cfg.P2pQuicPort,
 		&cfg.ContainerTag,
 		&cfg.AdditionalBnFlags,
 		&cfg.AdditionalVcFlags,
@@ -115,7 +133,7 @@ func (cfg *LodestarConfig) GetName() string {
 	return "Lodestar"
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *LodestarConfig) GetConfigTitle() string {
 	return cfg.Title
 }

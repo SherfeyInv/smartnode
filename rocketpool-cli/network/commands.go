@@ -1,25 +1,27 @@
 package network
 
 import (
-	"github.com/urfave/cli"
+	"context"
 
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
+	"github.com/urfave/cli/v3"
+
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
 )
 
 // Register commands
-func RegisterCommands(app *cli.App, name string, aliases []string) {
-	app.Commands = append(app.Commands, cli.Command{
+func RegisterCommands(app *cli.Command, name string, aliases []string) {
+	app.Commands = append(app.Commands, &cli.Command{
 		Name:    name,
 		Aliases: aliases,
 		Usage:   "Manage Rocket Pool network parameters",
-		Subcommands: []cli.Command{
+		Commands: []*cli.Command{
 
 			{
 				Name:      "stats",
 				Aliases:   []string{"s"},
 				Usage:     "Get stats about the Rocket Pool network and its tokens",
 				UsageText: "rocketpool network stats",
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -27,7 +29,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return getStats(c)
+					return getStats()
 
 				},
 			},
@@ -37,7 +39,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Aliases:   []string{"t"},
 				Usage:     "Shows a table of the timezones that node operators belong to",
 				UsageText: "rocketpool network timezone-map",
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -45,7 +47,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return getTimezones(c)
+					return getTimezones()
 
 				},
 			},
@@ -55,7 +57,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Aliases:   []string{"f"},
 				Usage:     "Get the current network node commission rate",
 				UsageText: "rocketpool network node-fee",
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -63,7 +65,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return getNodeFee(c)
+					return getNodeFee()
 
 				},
 			},
@@ -73,7 +75,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Aliases:   []string{"p"},
 				Usage:     "Get the current network RPL price in ETH",
 				UsageText: "rocketpool network rpl-price",
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -81,7 +83,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return getRplPrice(c)
+					return getRplPrice()
 
 				},
 			},
@@ -92,29 +94,32 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Usage:     "Generate and save the rewards tree file for the provided interval.\nNote that this is an asynchronous process, so it will return before the file is generated.\nYou will need to use `rocketpool service logs api` to follow its progress.",
 				UsageText: "rocketpool network generate-rewards-tree",
 				Flags: []cli.Flag{
-					cli.StringFlag{
-						Name:  "execution-client-url, e",
-						Usage: "The URL of a separate execution client you want to use for generation (ignore this flag to use your primary exeuction client). Use this if your primary client is not an archive node, and you need to provide a separate archive node URL.",
+					&cli.StringFlag{
+						Name:    "execution-client-url",
+						Aliases: []string{"e"},
+						Usage:   "The URL of a separate execution client you want to use for generation (ignore this flag to use your primary execution client). Use this if your primary client is not an archive node, and you need to provide a separate archive node URL.",
 					},
-					cli.Uint64Flag{
+					&cli.Uint64Flag{
 						Name:  "index",
 						Usage: "The index of the rewards interval you want to generate the tree for",
 					},
-					cli.BoolFlag{
-						Name:  "yes, y",
-						Usage: "Automatically confirm any questions about tree generation",
+					&cli.BoolFlag{
+						Name:    "yes",
+						Aliases: []string{"y"},
+						Usage:   "Automatically confirm any questions about tree generation",
 					},
 				},
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
 						return err
 					}
 
-					// Run
-					return generateRewardsTree(c)
-
+					if c.IsSet("index") {
+						return generateRewardsTree(int64(c.Uint64("index")), c.Bool("yes"))
+					}
+					return generateRewardsTree(-1, c.Bool("yes"))
 				},
 			},
 
@@ -123,7 +128,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Aliases:   []string{"d"},
 				Usage:     "Get the currently active DAO proposals",
 				UsageText: "rocketpool network dao-proposals",
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -131,7 +136,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return getActiveDAOProposals(c)
+					return getActiveDAOProposals()
 
 				},
 			},

@@ -5,20 +5,21 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/dao/protocol"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/types"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/protocol"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/types"
+	log "github.com/rocket-pool/smartnode/shared/logger"
 	"github.com/rocket-pool/smartnode/shared/services/beacon"
 	"github.com/rocket-pool/smartnode/shared/services/config"
 	"github.com/rocket-pool/smartnode/shared/services/state"
-	"github.com/rocket-pool/smartnode/shared/utils/log"
 )
 
 type ProposalManager struct {
 	viSnapshotMgr  *VotingInfoSnapshotManager
 	networkTreeMgr *NetworkTreeManager
 	nodeTreeMgr    *NodeTreeManager
-	stateMgr       *state.NetworkStateManager
+	stateMgr       state.NetworkStateProvider
 
 	log       *log.ColorLogger
 	logPrefix string
@@ -43,10 +44,7 @@ func NewProposalManager(log *log.ColorLogger, cfg *config.RocketPoolConfig, rp *
 		return nil, fmt.Errorf("error creating node tree manager: %w", err)
 	}
 
-	stateMgr, err := state.NewNetworkStateManager(rp, cfg, rp.Client, bc, log)
-	if err != nil {
-		return nil, fmt.Errorf("error creating network state manager: %w", err)
-	}
+	stateMgr := state.NewNetworkStateManager(rp, cfg.Smartnode.GetStateManagerContracts(), bc, log)
 
 	logPrefix := "[PDAO Proposals]"
 	return &ProposalManager{

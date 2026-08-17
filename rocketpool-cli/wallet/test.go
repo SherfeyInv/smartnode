@@ -6,24 +6,22 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/urfave/cli"
 
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/color"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
 )
 
-const (
-	colorReset  string = "\033[0m"
-	colorRed    string = "\033[31m"
-	colorGreen  string = "\033[32m"
-	colorYellow string = "\033[33m"
-)
+func testRecovery(mnemonic, addressFlag string, skipValidatorKeyRecovery bool, derivationPath string, walletIndex uint, yes bool) error {
 
-func testRecovery(c *cli.Context) error {
-
-	// Get RP client
-	rp, ready, err := rocketpool.NewClientFromCtx(c).WithStatus()
-	if err != nil {
-		return err
+	// Only check client status when testing validator key recovery
+	rp := rocketpool.NewClient()
+	ready := false
+	if !skipValidatorKeyRecovery {
+		var err error
+		rp, ready, err = rp.WithStatus()
+		if err != nil {
+			return err
+		}
 	}
 	defer rp.Close()
 
@@ -33,21 +31,40 @@ func testRecovery(c *cli.Context) error {
 		return err
 	}
 
-	// Prompt a notice about test recovery
-	fmt.Printf("%sNOTE:\nThis command will test the recovery of your node wallet's private key and (unless explicitly disabled) the validator keys for your minipools, but will not actually write any files; it's simply a \"dry run\" of recovery.\nUse `rocketpool wallet recover` to actually recover the wallet and validator keys.%s\n\n", colorYellow, colorReset)
+	// A dry run still derives keys on the daemon, so it contends with a real
+	// recovery for the same wallet; check before asking for the mnemonic
+	running, err := checkForRunningKeyRecovery(rp, cfg)
+	if err != nil {
+		return err
+	}
+	if running {
+		return nil
+	}
+
+	// Explain what this does and confirm, before asking for the mnemonic
+	effects := []string{
+		"Derive your node wallet's private key from the mnemonic phrase you provide",
+	}
+	if !skipValidatorKeyRecovery {
+		effects = append(effects, "Derive the validator keys for every validator on this node")
+	}
+	effects = append(effects,
+		"Write nothing to disk - this is a dry run to confirm that recovery would work",
+		"Hold the daemon's recovery lock while it runs, so a real recovery cannot start until it finishes",
+	)
+	if !confirmRecoveryOperation(yes, "You are about to test recovering your node wallet.", effects) {
+		return nil
+	}
+	color.YellowPrintln("Use `rocketpool wallet recover` to actually recover the wallet and validator keys.")
+	fmt.Println()
 
 	// Prompt for mnemonic
-	var mnemonic string
-	if c.String("mnemonic") != "" {
-		mnemonic = c.String("mnemonic")
-	} else {
+	if mnemonic == "" {
 		mnemonic = PromptMnemonic()
 	}
 	mnemonic = strings.TrimSpace(mnemonic)
 
 	// Handle validator key recovery skipping
-	skipValidatorKeyRecovery := c.Bool("skip-validator-key-recovery")
-
 	// Check for custom keys
 	if !skipValidatorKeyRecovery {
 		customKeyPasswordFile, err := promptForCustomKeyPasswords(rp, cfg, true)
@@ -64,18 +81,25 @@ func testRecovery(c *cli.Context) error {
 
 				err = os.Remove(customKeyPasswordFile)
 				if err != nil {
-					fmt.Printf("*** WARNING ***\nAn error occurred while removing the custom keystore password file: %s\n\nThis file contains the passwords to your custom validator keys.\nYou *must* delete it manually as soon as possible so nobody can read it.\n\nThe file is located here:\n\n\t%s\n\n", err.Error(), customKeyPasswordFile)
+					fmt.Println("*** WARNING ***")
+					fmt.Printf("An error occurred while removing the custom keystore password file: %s\n", err.Error())
+					fmt.Println()
+					fmt.Println("This file contains the passwords to your custom validator keys.")
+					fmt.Println("You *must* delete it manually as soon as possible so nobody can read it.")
+					fmt.Println()
+					fmt.Println("The file is located here:")
+					fmt.Println()
+					fmt.Printf("\t%s\n", customKeyPasswordFile)
+					fmt.Println()
 				}
 			}(customKeyPasswordFile)
 		}
 	}
 
 	// Check for a search-by-address operation
-	addressString := c.String("address")
-	if addressString != "" {
-
+	if addressFlag != "" {
 		// Get the address to search for
-		address := common.HexToAddress(addressString)
+		address := common.HexToAddress(addressFlag)
 		fmt.Printf("Searching for the derivation path and index for wallet %s...\nNOTE: this may take several minutes depending on how large your wallet's index is.\n", address.Hex())
 
 		if !skipValidatorKeyRecovery {
@@ -88,7 +112,9 @@ func testRecovery(c *cli.Context) error {
 		}
 
 		// Test recover wallet
+		stopProgress := startRecoveryProgressReporter(rp)
 		response, err := rp.TestSearchAndRecoverWallet(mnemonic, address, skipValidatorKeyRecovery)
+		stopProgress()
 		if err != nil {
 			return err
 		}
@@ -112,13 +138,11 @@ func testRecovery(c *cli.Context) error {
 	} else {
 
 		// Get the derivation path
-		derivationPath := c.String("derivation-path")
 		if derivationPath != "" {
 			fmt.Printf("Using a custom derivation path (%s).\n", derivationPath)
 		}
 
 		// Get the wallet index
-		walletIndex := c.Uint("wallet-index")
 		if walletIndex != 0 {
 			fmt.Printf("Using a custom wallet index (%d).\n", walletIndex)
 		}
@@ -135,7 +159,9 @@ func testRecovery(c *cli.Context) error {
 		}
 
 		// Test recover wallet
+		stopProgress := startRecoveryProgressReporter(rp)
 		response, err := rp.TestRecoverWallet(mnemonic, skipValidatorKeyRecovery, derivationPath, walletIndex)
+		stopProgress()
 		if err != nil {
 			return err
 		}

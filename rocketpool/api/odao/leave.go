@@ -1,19 +1,18 @@
 package odao
 
 import (
-	"fmt"
-
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/dao/trustednode"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/trustednode"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canLeave(c *cli.Context) (*api.CanLeaveTNDAOResponse, error) {
+func canLeave(c *cli.Command) (*api.CanLeaveTNDAOResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -62,9 +61,9 @@ func canLeave(c *cli.Context) (*api.CanLeaveTNDAOResponse, error) {
 		if err != nil {
 			return err
 		}
-		gasInfo, err := trustednode.EstimateLeaveGas(rp, opts.From, opts)
+		gasLimits, err := trustednode.EstimateLeaveGas(rp, opts.From, opts)
 		if err == nil {
-			response.GasInfo = gasInfo
+			response.GasLimits = gasLimits
 		}
 		return err
 	})
@@ -75,19 +74,15 @@ func canLeave(c *cli.Context) (*api.CanLeaveTNDAOResponse, error) {
 	}
 
 	// Update & return response
-	response.CanLeave = !(response.ProposalExpired || response.InsufficientMembers)
+	response.CanLeave = !response.ProposalExpired && !response.InsufficientMembers
 	return &response, nil
 
 }
 
-func leave(c *cli.Context, bondRefundAddress common.Address) (*api.LeaveTNDAOResponse, error) {
+func leave(c *cli.Command, bondRefundAddress common.Address, opts *bind.TransactOpts) (*api.LeaveTNDAOResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -97,18 +92,6 @@ func leave(c *cli.Context, bondRefundAddress common.Address) (*api.LeaveTNDAORes
 
 	// Response
 	response := api.LeaveTNDAOResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Leave
 	hash, err := trustednode.Leave(rp, bondRefundAddress, opts)

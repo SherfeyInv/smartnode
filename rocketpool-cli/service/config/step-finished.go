@@ -1,17 +1,16 @@
 package config
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/rivo/tview"
-	"github.com/rocket-pool/smartnode/shared/types/config"
+
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
 )
 
 func createFinishedStep(wiz *wizard, currentStep int, totalSteps int) *choiceWizardStep {
 
-	helperText := "All done! You're ready to run.\n\nIf you'd like, you can review and change all of the Smartnode and client settings next or just save and exit."
+	helperText := "All done! You're ready to run.\n\nIf you'd like, you can review and change all of the Smart Node and client settings next or just save and exit."
 
 	show := func(modal *choiceModalLayout) {
 		wiz.md.setPage(modal.page)
@@ -34,8 +33,8 @@ func createFinishedStep(wiz *wizard, currentStep int, totalSteps int) *choiceWiz
 	}
 
 	back := func() {
-		if wiz.md.Config.Smartnode.Network.Value == config.Network_Holesky || wiz.md.Config.Smartnode.Network.Value == config.Network_Devnet {
-			// Skip MEV for Holesky
+		if wiz.md.Config.Smartnode.Network.Value == cfgtypes.Network_Testnet || wiz.md.Config.Smartnode.Network.Value == cfgtypes.Network_Devnet {
+			// Skip MEV for testnet/devnet
 			wiz.metricsModal.show()
 		} else {
 			wiz.mevModeModal.show()
@@ -64,13 +63,13 @@ func createFinishedStep(wiz *wizard, currentStep int, totalSteps int) *choiceWiz
 }
 
 // Processes a configuration after saving and exiting without looking at the review screen
-func processConfigAfterQuit(md *mainDisplay) {
+func processConfigAfterQuit(md *MainDisplay) {
 	errors := md.Config.Validate()
 	if len(errors) > 0 {
 		builder := strings.Builder{}
 		builder.WriteString("[orange]WARNING: Your configuration encountered errors. You must correct the following in order to save it:\n\n")
 		for _, err := range errors {
-			builder.WriteString(fmt.Sprintf("%s\n\n", err))
+			builder.WriteString(err + "\n\n")
 		}
 
 		modal := tview.NewModal().
@@ -94,7 +93,6 @@ func processConfigAfterQuit(md *mainDisplay) {
 		_, totalAffectedContainers, changeNetworks := md.Config.GetChanges(md.PreviousConfig)
 
 		if md.isUpdate {
-			totalAffectedContainers[cfgtypes.ContainerID_Api] = true
 			totalAffectedContainers[cfgtypes.ContainerID_Node] = true
 			totalAffectedContainers[cfgtypes.ContainerID_Watchtower] = true
 		}

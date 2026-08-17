@@ -1,0 +1,132 @@
+package megapool
+
+import (
+	"math/big"
+
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/urfave/cli/v3"
+
+	"github.com/rocket-pool/smartnode/bindings/megapool"
+
+	"github.com/rocket-pool/smartnode/shared/services"
+	"github.com/rocket-pool/smartnode/shared/types/api"
+)
+
+func canClaimRefund(c *cli.Command) (*api.CanClaimRefundResponse, error) {
+
+	// Get services
+	if err := services.RequireNodeRegistered(c); err != nil {
+		return nil, err
+	}
+	w, err := services.GetWallet(c)
+	if err != nil {
+		return nil, err
+	}
+	rp, err := services.GetRocketPool(c)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the node account
+	nodeAccount, err := w.GetNodeAccount()
+	if err != nil {
+		return nil, err
+	}
+
+	// Response
+	response := api.CanClaimRefundResponse{}
+
+	// Check if the megapool is deployed
+	megapoolDeployed, err := megapool.GetMegapoolDeployed(rp, nodeAccount.Address, nil)
+	if err != nil {
+		return nil, err
+	}
+	if !megapoolDeployed {
+		response.CanClaim = false
+		return &response, nil
+	}
+
+	// Get the megapool address
+	megapoolAddress, err := megapool.GetMegapoolExpectedAddress(rp, nodeAccount.Address, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Load the megapool
+	mp, err := megapool.NewMegaPoolV1(rp, megapoolAddress, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the megapool refund value
+	refund, err := mp.GetRefundValue(nil)
+	if err != nil {
+		return nil, err
+	}
+	if refund.Cmp(big.NewInt(0)) == 0 {
+		response.CanClaim = false
+	}
+
+	// Get gas estimate
+	opts, err := w.GetNodeAccountTransactor()
+	if err != nil {
+		return nil, err
+	}
+	gasLimits, err := mp.EstimateClaimRefundGas(opts)
+	if err != nil {
+		return nil, err
+	}
+	response.GasLimits = gasLimits
+	response.CanClaim = true
+
+	return &response, nil
+
+}
+
+func claimRefund(c *cli.Command, opts *bind.TransactOpts) (*api.ClaimRefundResponse, error) {
+
+	// Get services
+	if err := services.RequireNodeRegistered(c); err != nil {
+		return nil, err
+	}
+	w, err := services.GetWallet(c)
+	if err != nil {
+		return nil, err
+	}
+	rp, err := services.GetRocketPool(c)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the node account
+	nodeAccount, err := w.GetNodeAccount()
+	if err != nil {
+		return nil, err
+	}
+
+	// Response
+	response := api.ClaimRefundResponse{}
+
+	// Get the megapool address
+	megapoolAddress, err := megapool.GetMegapoolExpectedAddress(rp, nodeAccount.Address, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Load the megapool
+	mp, err := megapool.NewMegaPoolV1(rp, megapoolAddress, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Dissolve
+	hash, err := mp.ClaimRefund(opts)
+	if err != nil {
+		return nil, err
+	}
+	response.TxHash = hash
+
+	// Return response
+	return &response, nil
+
+}

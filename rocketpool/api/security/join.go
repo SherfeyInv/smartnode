@@ -1,18 +1,18 @@
 package security
 
 import (
-	"fmt"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 
-	"github.com/rocket-pool/rocketpool-go/dao/security"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/security"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canJoin(c *cli.Context) (*api.SecurityCanJoinResponse, error) {
+func canJoin(c *cli.Command) (*api.SecurityCanJoinResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
@@ -62,9 +62,9 @@ func canJoin(c *cli.Context) (*api.SecurityCanJoinResponse, error) {
 		if err != nil {
 			return err
 		}
-		gasInfo, err := security.EstimateJoinGas(rp, opts)
+		gasLimits, err := security.EstimateJoinGas(rp, opts)
 		if err == nil {
-			response.GasInfo = gasInfo
+			response.GasLimits = gasLimits
 		}
 		return err
 	})
@@ -75,19 +75,15 @@ func canJoin(c *cli.Context) (*api.SecurityCanJoinResponse, error) {
 	}
 
 	// Update & return response
-	response.CanJoin = !(response.ProposalExpired || response.AlreadyMember)
+	response.CanJoin = !response.ProposalExpired && !response.AlreadyMember
 	return &response, nil
 
 }
 
-func join(c *cli.Context) (*api.SecurityJoinResponse, error) {
+func join(c *cli.Command, opts *bind.TransactOpts) (*api.SecurityJoinResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -99,14 +95,6 @@ func join(c *cli.Context) (*api.SecurityJoinResponse, error) {
 	response := api.SecurityJoinResponse{}
 
 	// Join
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 	hash, err := security.Join(rp, opts)
 	if err != nil {
 		return nil, err

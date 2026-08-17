@@ -4,18 +4,17 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
-	"github.com/urfave/cli"
-
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
 )
 
-func proposeSettingMembersQuorum(c *cli.Context, quorumPercent float64) error {
+func proposeSettingMembersQuorum(quorumPercent float64, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -35,13 +34,13 @@ func proposeSettingMembersQuorum(c *cli.Context, quorumPercent float64) error {
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canPropose.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canPropose.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to submit this proposal?")) {
+	if prompt.Declined(yes, "Are you sure you want to submit this proposal?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -64,17 +63,17 @@ func proposeSettingMembersQuorum(c *cli.Context, quorumPercent float64) error {
 
 }
 
-func proposeSettingMembersRplBond(c *cli.Context, bondAmountEth float64) error {
+func proposeSettingMembersRplBond(bondAmountEth float64, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
 	defer rp.Close()
 
 	// Check if proposal can be made
-	canPropose, err := rp.CanProposeTNDAOSettingMembersRplBond(eth.EthToWei(bondAmountEth))
+	canPropose, err := rp.CanProposeTNDAOSettingMembersRplBond(math.EthToWei(bondAmountEth))
 	if err != nil {
 		return err
 	}
@@ -87,19 +86,19 @@ func proposeSettingMembersRplBond(c *cli.Context, bondAmountEth float64) error {
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canPropose.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canPropose.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to submit this proposal?")) {
+	if prompt.Declined(yes, "Are you sure you want to submit this proposal?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}
 
 	// Submit proposal
-	response, err := rp.ProposeTNDAOSettingMembersRplBond(eth.EthToWei(bondAmountEth))
+	response, err := rp.ProposeTNDAOSettingMembersRplBond(math.EthToWei(bondAmountEth))
 	if err != nil {
 		return err
 	}
@@ -116,62 +115,10 @@ func proposeSettingMembersRplBond(c *cli.Context, bondAmountEth float64) error {
 
 }
 
-func proposeSettingMinipoolUnbondedMax(c *cli.Context, unbondedMinipoolMax uint64) error {
+func proposeSettingProposalCooldown(proposalCooldownTimespan string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
-	if err != nil {
-		return err
-	}
-	defer rp.Close()
-
-	// Check if proposal can be made
-	canPropose, err := rp.CanProposeTNDAOSettingMinipoolUnbondedMax(unbondedMinipoolMax)
-	if err != nil {
-		return err
-	}
-	if !canPropose.CanPropose {
-		fmt.Println("Cannot propose setting update:")
-		if canPropose.ProposalCooldownActive {
-			fmt.Println("The node must wait for the proposal cooldown period to pass before making another proposal.")
-		}
-		return nil
-	}
-
-	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canPropose.GasInfo, rp, c.Bool("yes"))
-	if err != nil {
-		return err
-	}
-
-	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to submit this proposal?")) {
-		fmt.Println("Cancelled.")
-		return nil
-	}
-
-	// Submit proposal
-	response, err := rp.ProposeTNDAOSettingMinipoolUnbondedMax(unbondedMinipoolMax)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("Submitting proposal...\n")
-	cliutils.PrintTransactionHash(rp, response.TxHash)
-	if _, err = rp.WaitForTransaction(response.TxHash); err != nil {
-		return err
-	}
-
-	// Log & return
-	fmt.Printf("Successfully submitted a members.minipool.unbonded.max setting update proposal with ID %d.\n", response.ProposalId)
-	return nil
-
-}
-
-func proposeSettingProposalCooldown(c *cli.Context, proposalCooldownTimespan string) error {
-
-	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -198,13 +145,13 @@ func proposeSettingProposalCooldown(c *cli.Context, proposalCooldownTimespan str
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canPropose.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canPropose.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to submit this proposal?")) {
+	if prompt.Declined(yes, "Are you sure you want to submit this proposal?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -227,10 +174,10 @@ func proposeSettingProposalCooldown(c *cli.Context, proposalCooldownTimespan str
 
 }
 
-func proposeSettingProposalVoteTimespan(c *cli.Context, proposalVoteTimespan string) error {
+func proposeSettingProposalVoteTimespan(proposalVoteTimespan string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -257,13 +204,13 @@ func proposeSettingProposalVoteTimespan(c *cli.Context, proposalVoteTimespan str
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canPropose.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canPropose.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to submit this proposal?")) {
+	if prompt.Declined(yes, "Are you sure you want to submit this proposal?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -286,10 +233,10 @@ func proposeSettingProposalVoteTimespan(c *cli.Context, proposalVoteTimespan str
 
 }
 
-func proposeSettingProposalVoteDelayTimespan(c *cli.Context, proposalDelayTimespan string) error {
+func proposeSettingProposalVoteDelayTimespan(proposalDelayTimespan string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -316,13 +263,13 @@ func proposeSettingProposalVoteDelayTimespan(c *cli.Context, proposalDelayTimesp
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canPropose.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canPropose.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to submit this proposal?")) {
+	if prompt.Declined(yes, "Are you sure you want to submit this proposal?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -345,10 +292,10 @@ func proposeSettingProposalVoteDelayTimespan(c *cli.Context, proposalDelayTimesp
 
 }
 
-func proposeSettingProposalExecuteTimespan(c *cli.Context, proposalExecuteTimespan string) error {
+func proposeSettingProposalExecuteTimespan(proposalExecuteTimespan string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -375,13 +322,13 @@ func proposeSettingProposalExecuteTimespan(c *cli.Context, proposalExecuteTimesp
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canPropose.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canPropose.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to submit this proposal?")) {
+	if prompt.Declined(yes, "Are you sure you want to submit this proposal?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -404,10 +351,10 @@ func proposeSettingProposalExecuteTimespan(c *cli.Context, proposalExecuteTimesp
 
 }
 
-func proposeSettingProposalActionTimespan(c *cli.Context, proposalActionTimespan string) error {
+func proposeSettingProposalActionTimespan(proposalActionTimespan string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -434,13 +381,13 @@ func proposeSettingProposalActionTimespan(c *cli.Context, proposalActionTimespan
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canPropose.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canPropose.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to submit this proposal?")) {
+	if prompt.Declined(yes, "Are you sure you want to submit this proposal?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -463,10 +410,10 @@ func proposeSettingProposalActionTimespan(c *cli.Context, proposalActionTimespan
 
 }
 
-func proposeSettingScrubPeriod(c *cli.Context, scrubPeriod string) error {
+func proposeSettingScrubPeriod(scrubPeriod string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -493,13 +440,13 @@ func proposeSettingScrubPeriod(c *cli.Context, scrubPeriod string) error {
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canPropose.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canPropose.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to submit this proposal?")) {
+	if prompt.Declined(yes, "Are you sure you want to submit this proposal?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -522,10 +469,10 @@ func proposeSettingScrubPeriod(c *cli.Context, scrubPeriod string) error {
 
 }
 
-func proposeSettingPromotionScrubPeriod(c *cli.Context, scrubPeriod string) error {
+func proposeSettingPromotionScrubPeriod(scrubPeriod string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -552,13 +499,13 @@ func proposeSettingPromotionScrubPeriod(c *cli.Context, scrubPeriod string) erro
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canPropose.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canPropose.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to submit this proposal?")) {
+	if prompt.Declined(yes, "Are you sure you want to submit this proposal?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -581,10 +528,10 @@ func proposeSettingPromotionScrubPeriod(c *cli.Context, scrubPeriod string) erro
 
 }
 
-func proposeSettingScrubPenaltyEnabled(c *cli.Context, enabled bool) error {
+func proposeSettingScrubPenaltyEnabled(enabled bool, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -604,13 +551,13 @@ func proposeSettingScrubPenaltyEnabled(c *cli.Context, enabled bool) error {
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canPropose.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canPropose.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to submit this proposal?")) {
+	if prompt.Declined(yes, "Are you sure you want to submit this proposal?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -633,10 +580,10 @@ func proposeSettingScrubPenaltyEnabled(c *cli.Context, enabled bool) error {
 
 }
 
-func proposeSettingBondReductionWindowStart(c *cli.Context, windowStart string) error {
+func proposeSettingBondReductionWindowStart(windowStart string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -663,13 +610,13 @@ func proposeSettingBondReductionWindowStart(c *cli.Context, windowStart string) 
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canPropose.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canPropose.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to submit this proposal?")) {
+	if prompt.Declined(yes, "Are you sure you want to submit this proposal?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}
@@ -692,10 +639,10 @@ func proposeSettingBondReductionWindowStart(c *cli.Context, windowStart string) 
 
 }
 
-func proposeSettingBondReductionWindowLength(c *cli.Context, windowLength string) error {
+func proposeSettingBondReductionWindowLength(windowLength string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -722,13 +669,13 @@ func proposeSettingBondReductionWindowLength(c *cli.Context, windowLength string
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canPropose.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canPropose.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to submit this proposal?")) {
+	if prompt.Declined(yes, "Are you sure you want to submit this proposal?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}

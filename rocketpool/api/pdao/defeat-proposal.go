@@ -1,20 +1,21 @@
 package pdao
 
 import (
-	"fmt"
 	"time"
 
-	"github.com/rocket-pool/rocketpool-go/dao/protocol"
-	"github.com/rocket-pool/rocketpool-go/types"
-	"github.com/urfave/cli"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/protocol"
+	"github.com/rocket-pool/smartnode/bindings/types"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canDefeatProposal(c *cli.Context, proposalId uint64, index uint64) (*api.PDAOCanDefeatProposalResponse, error) {
+func canDefeatProposal(c *cli.Command, proposalId uint64, index uint64) (*api.PDAOCanDefeatProposalResponse, error) {
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
 		return nil, err
@@ -88,7 +89,7 @@ func canDefeatProposal(c *cli.Context, proposalId uint64, index uint64) (*api.PD
 	// Validate
 	defeatStart := creationTime.Add(challengeWindow)
 	response.StillInChallengeWindow = (time.Until(defeatStart) > 0)
-	response.CanDefeat = !(response.DoesNotExist || response.AlreadyDefeated || response.InvalidChallengeState || response.StillInChallengeWindow)
+	response.CanDefeat = !response.DoesNotExist && !response.AlreadyDefeated && !response.InvalidChallengeState && !response.StillInChallengeWindow
 	if !response.CanDefeat {
 		return &response, nil
 	}
@@ -98,26 +99,22 @@ func canDefeatProposal(c *cli.Context, proposalId uint64, index uint64) (*api.PD
 	if err != nil {
 		return nil, err
 	}
-	gasInfo, err := protocol.EstimateDefeatProposalGas(rp, proposalId, index, opts)
+	gasLimits, err := protocol.EstimateDefeatProposalGas(rp, proposalId, index, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	// Update & return response
-	response.GasInfo = gasInfo
+	response.GasLimits = gasLimits
 	return &response, nil
 }
 
-func defeatProposal(c *cli.Context, proposalId uint64, index uint64) (*api.PDAODefeatProposalResponse, error) {
+func defeatProposal(c *cli.Command, proposalId uint64, index uint64, opts *bind.TransactOpts) (*api.PDAODefeatProposalResponse, error) {
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
 		return nil, err
 	}
 	if err := services.RequireRocketStorage(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -127,18 +124,6 @@ func defeatProposal(c *cli.Context, proposalId uint64, index uint64) (*api.PDAOD
 
 	// Response
 	response := api.PDAODefeatProposalResponse{}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
 
 	// Execute proposal
 	hash, err := protocol.DefeatProposal(rp, proposalId, index, opts)

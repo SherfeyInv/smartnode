@@ -3,27 +3,23 @@ package node
 import (
 	"fmt"
 
-	"github.com/urfave/cli"
-
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
 )
 
-func setTimezoneLocation(c *cli.Context) error {
+func setTimezoneLocation(timezoneLocation string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
 	defer rp.Close()
 
 	// Prompt for timezone location
-	var timezoneLocation string
-	if c.String("timezone") != "" {
-		timezoneLocation = c.String("timezone")
-	} else {
+	if timezoneLocation == "" {
 		timezoneLocation = promptTimezone()
 	}
 
@@ -34,13 +30,13 @@ func setTimezoneLocation(c *cli.Context) error {
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canResponse.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canResponse.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm("Are you sure you want to set your timezone?")) {
+	if prompt.Declined(yes, "Are you sure you want to set your timezone?") {
 		fmt.Println("Cancelled.")
 		return nil
 	}

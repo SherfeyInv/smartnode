@@ -4,17 +4,17 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/urfave/cli"
 
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
 	"github.com/rocket-pool/smartnode/shared/services/gas"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
 )
 
-func leave(c *cli.Context) error {
+func leave(refundAddress string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -22,7 +22,7 @@ func leave(c *cli.Context) error {
 
 	// Get the RPL bond refund address
 	var bondRefundAddress common.Address
-	if c.String("refund-address") == "node" {
+	if refundAddress == "node" {
 
 		// Set bond refund address to node address
 		wallet, err := rp.WalletStatus()
@@ -31,10 +31,10 @@ func leave(c *cli.Context) error {
 		}
 		bondRefundAddress = wallet.AccountAddress
 
-	} else if c.String("refund-address") != "" {
+	} else if refundAddress != "" {
 
 		// Parse bond refund address
-		bondRefundAddress = common.HexToAddress(c.String("refund-address"))
+		bondRefundAddress = common.HexToAddress(refundAddress)
 
 	} else {
 
@@ -45,12 +45,12 @@ func leave(c *cli.Context) error {
 		}
 
 		// Prompt for node address
-		if cliutils.Confirm(fmt.Sprintf("Would you like to refund your RPL bond to your node account (%s)?", wallet.AccountAddress.Hex())) {
+		if prompt.Confirm("Would you like to refund your RPL bond to your node account (%s)?", wallet.AccountAddress.Hex()) {
 			bondRefundAddress = wallet.AccountAddress
 		} else {
 
 			// Prompt for custom address
-			inputAddress := cliutils.Prompt("Please enter the address to refund your RPL bond to:", "^0x[0-9a-fA-F]{40}$", "Invalid address")
+			inputAddress := prompt.Prompt("Please enter the address to refund your RPL bond to:", "^0x[0-9a-fA-F]{40}$", "Invalid address")
 			bondRefundAddress = common.HexToAddress(inputAddress)
 
 		}
@@ -74,13 +74,13 @@ func leave(c *cli.Context) error {
 	}
 
 	// Assign max fees
-	err = gas.AssignMaxFeeAndLimit(canLeave.GasInfo, rp, c.Bool("yes"))
+	err = gas.AssignMaxFeeAndLimit(canLeave.GasLimits, rp, yes)
 	if err != nil {
 		return err
 	}
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.Confirm(fmt.Sprintf("Are you sure you want to leave the oracle DAO and refund your RPL bond to %s? This action cannot be undone!", bondRefundAddress.Hex()))) {
+	if prompt.Declined(yes, "Are you sure you want to leave the oracle DAO and refund your RPL bond to %s? This action cannot be undone!", bondRefundAddress.Hex()) {
 		fmt.Println("Cancelled.")
 		return nil
 	}

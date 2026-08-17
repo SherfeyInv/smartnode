@@ -4,19 +4,19 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/dao/trustednode"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/rocket-pool/smartnode/bindings/dao/trustednode"
+
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
-	"github.com/rocket-pool/smartnode/shared/utils/math"
 )
 
-func canProposeKick(c *cli.Context, memberAddress common.Address, fineAmountWei *big.Int) (*api.CanProposeTNDAOKickResponse, error) {
+func canProposeKick(c *cli.Command, memberAddress common.Address, fineAmountWei *big.Int) (*api.CanProposeTNDAOKickResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
@@ -73,10 +73,10 @@ func canProposeKick(c *cli.Context, memberAddress common.Address, fineAmountWei 
 		if err != nil {
 			return err
 		}
-		message := fmt.Sprintf("kick %s (%s) with %.6f RPL fine", memberId, memberUrl, math.RoundDown(eth.WeiToEth(fineAmountWei), 6))
-		gasInfo, err := trustednode.EstimateProposeKickMemberGas(rp, message, memberAddress, fineAmountWei, opts)
+		message := fmt.Sprintf("kick %s (%s) with %.6f RPL fine", memberId, memberUrl, math.RoundDown(math.WeiToEth(fineAmountWei), 6))
+		gasLimits, err := trustednode.EstimateProposeKickMemberGas(rp, message, memberAddress, fineAmountWei, opts)
 		if err == nil {
-			response.GasInfo = gasInfo
+			response.GasLimits = gasLimits
 		}
 		return err
 	})
@@ -87,19 +87,15 @@ func canProposeKick(c *cli.Context, memberAddress common.Address, fineAmountWei 
 	}
 
 	// Update & return response
-	response.CanPropose = !(response.ProposalCooldownActive || response.InsufficientRplBond)
+	response.CanPropose = !response.ProposalCooldownActive && !response.InsufficientRplBond
 	return &response, nil
 
 }
 
-func proposeKick(c *cli.Context, memberAddress common.Address, fineAmountWei *big.Int) (*api.ProposeTNDAOKickResponse, error) {
+func proposeKick(c *cli.Command, memberAddress common.Address, fineAmountWei *big.Int, opts *bind.TransactOpts) (*api.ProposeTNDAOKickResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeTrusted(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -132,20 +128,8 @@ func proposeKick(c *cli.Context, memberAddress common.Address, fineAmountWei *bi
 		return nil, err
 	}
 
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
-
 	// Submit proposal
-	message := fmt.Sprintf("kick %s (%s) with %.6f RPL fine", memberId, memberUrl, math.RoundDown(eth.WeiToEth(fineAmountWei), 6))
+	message := fmt.Sprintf("kick %s (%s) with %.6f RPL fine", memberId, memberUrl, math.RoundDown(math.WeiToEth(fineAmountWei), 6))
 	proposalId, hash, err := trustednode.ProposeKickMember(rp, message, memberAddress, fineAmountWei, opts)
 	if err != nil {
 		return nil, err

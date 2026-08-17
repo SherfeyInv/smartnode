@@ -1,16 +1,17 @@
 package odao
 
 import (
-	"github.com/rocket-pool/rocketpool-go/dao/trustednode"
-	rptypes "github.com/rocket-pool/rocketpool-go/types"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/dao/trustednode"
+	rptypes "github.com/rocket-pool/smartnode/bindings/types"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
 )
 
-func getStatus(c *cli.Context) (*api.TNDAOStatusResponse, error) {
+func getStatus(c *cli.Command) (*api.TNDAOStatusResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {

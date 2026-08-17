@@ -1,0 +1,413 @@
+package state
+
+import (
+	"context"
+	"fmt"
+	"math/big"
+	"time"
+
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/megapool"
+	"github.com/rocket-pool/smartnode/bindings/node"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/types"
+	"github.com/rocket-pool/smartnode/bindings/utils/multicall"
+)
+
+const (
+	legacyNodeBatchSize  int = 50
+	nodeAddressBatchSize int = 800
+)
+
+// Complete details for a node
+type NativeNodeDetails struct {
+	Exists                           bool           `json:"exists"`
+	RegistrationTime                 *big.Int       `json:"registration_time"`
+	TimezoneLocation                 string         `json:"timezone_location"`
+	FeeDistributorInitialised        bool           `json:"fee_distributor_initialised"`
+	FeeDistributorAddress            common.Address `json:"fee_distributor_address"`
+	RewardNetwork                    *big.Int       `json:"reward_network"`
+	EffectiveRPLStake                *big.Int       `json:"effective_rpl_stake"`
+	MinimumRPLStake                  *big.Int       `json:"minimum_rpl_stake"`
+	MaximumRPLStake                  *big.Int       `json:"maximum_rpl_stake"`
+	EthBorrowed                      *big.Int       `json:"eth_borrowed"`
+	EthBorrowedLimit                 *big.Int       `json:"eth_borrowed_limit"`
+	MegapoolETHBorrowed              *big.Int       `json:"megapool_eth_borrowed"`
+	MinipoolETHBorrowed              *big.Int       `json:"minipool_eth_borrowed"`
+	EthBonded                        *big.Int       `json:"eth_bonded"`
+	MegapoolEthBonded                *big.Int       `json:"megapool_eth_bonded"`
+	MinipoolETHBonded                *big.Int       `json:"minipool_eth_bonded"`
+	MegapoolStakedRPL                *big.Int       `json:"megapool_staked_rpl"`
+	LegacyStakedRPL                  *big.Int       `json:"legacy_staked_rpl"`
+	UnstakingRPL                     *big.Int       `json:"unstaking_rpl"`
+	LockedRPL                        *big.Int       `json:"locked_rpl"`
+	MinipoolCount                    *big.Int       `json:"minipool_count"`
+	MegapoolValidatorCount           uint32         `json:"megapool_validator_count"`
+	BalanceETH                       *big.Int       `json:"balance_eth"`
+	BalanceRETH                      *big.Int       `json:"balance_reth"`
+	BalanceRPL                       *big.Int       `json:"balance_rpl"`
+	BalanceOldRPL                    *big.Int       `json:"balance_old_rpl"`
+	DepositCreditBalance             *big.Int       `json:"deposit_credit_balance"`
+	DistributorBalanceUserETH        *big.Int       `json:"distributor_balance_user_eth"` // Must call CalculateAverageFeeAndDistributorShares to get this
+	DistributorBalanceNodeETH        *big.Int       `json:"distributor_balance_node_eth"` // Must call CalculateAverageFeeAndDistributorShares to get this
+	WithdrawalAddress                common.Address `json:"withdrawal_address"`
+	PendingWithdrawalAddress         common.Address `json:"pending_withdrawal_address"`
+	SmoothingPoolRegistrationState   bool           `json:"smoothing_pool_registration_state"`
+	SmoothingPoolRegistrationChanged *big.Int       `json:"smoothing_pool_registration_changed"`
+	NodeAddress                      common.Address `json:"node_address"`
+	AverageNodeFee                   *big.Int       `json:"average_node_fee"` // Must call CalculateAverageFeeAndDistributorShares to get this
+	CollateralisationRatio           *big.Int       `json:"collateralisation_ratio"`
+	DistributorBalance               *big.Int       `json:"distributor_balance"`
+	MegapoolAddress                  common.Address `json:"megapool_address"`
+	MegapoolDeployed                 bool           `json:"megapool_deployed"`
+}
+
+func timeMax(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+func timeMin(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
+// Returns whether the node is eligible for bonuses, and the start and end times of its eligibility
+func (node *NativeNodeDetails) IsEligibleForBonuses(eligibleStart time.Time, eligibleEnd time.Time) (bool, time.Time, time.Time) {
+	// Nodes are not eligible for bonuses if they never opted into the smoothing pool
+	registeredTime := time.Unix(node.SmoothingPoolRegistrationChanged.Int64(), 0)
+	if registeredTime.Unix() == 0 {
+		return false, time.Time{}, time.Time{}
+	}
+
+	// Nodes are eligible for bonuses if they were in the Smoothing Pool for a portion of the interval
+	if node.SmoothingPoolRegistrationState {
+		return registeredTime.Before(eligibleEnd), timeMax(registeredTime, eligibleStart), eligibleEnd
+	}
+
+	// Nodes that weren't opted in at the end of the interval are eligible if they opted out during the interval
+	return registeredTime.Before(eligibleEnd), timeMax(registeredTime, eligibleStart), timeMin(registeredTime, eligibleEnd)
+}
+
+// Gets the details for a node using the efficient multicall contract
+func GetNativeNodeDetails(rp *rocketpool.RocketPool, contracts *NetworkContracts, nodeAddress common.Address) (NativeNodeDetails, error) {
+	opts := &bind.CallOpts{
+		BlockNumber: contracts.ElBlockNumber,
+	}
+	details := NativeNodeDetails{
+		NodeAddress:               nodeAddress,
+		AverageNodeFee:            big.NewInt(0),
+		CollateralisationRatio:    big.NewInt(0),
+		DistributorBalanceUserETH: big.NewInt(0),
+		DistributorBalanceNodeETH: big.NewInt(0),
+	}
+
+	err := addNodeDetailsCalls(contracts, contracts.Multicaller, &details, nodeAddress)
+	if err != nil {
+		return NativeNodeDetails{}, fmt.Errorf("error adding node details calls: %w", err)
+	}
+
+	_, err = contracts.Multicaller.FlexibleCall(true, opts)
+	if err != nil {
+		return NativeNodeDetails{}, fmt.Errorf("error executing multicall: %w", err)
+	}
+
+	// Get the node's ETH balance
+	details.BalanceETH, err = rp.Client.BalanceAt(context.Background(), nodeAddress, opts.BlockNumber)
+	if err != nil {
+		return NativeNodeDetails{}, err
+	}
+
+	if details.MegapoolDeployed {
+		// Load the megapool contract
+		mp, err := megapool.NewMegaPoolV1(rp, details.MegapoolAddress, opts)
+		if err != nil {
+			return NativeNodeDetails{}, err
+		}
+
+		details.MegapoolValidatorCount, err = mp.GetActiveValidatorCount(nil)
+		if err != nil {
+			return NativeNodeDetails{}, err
+		}
+	}
+
+	// Get the distributor balance
+	distributorBalance, err := rp.Client.BalanceAt(context.Background(), details.FeeDistributorAddress, opts.BlockNumber)
+	if err != nil {
+		return NativeNodeDetails{}, err
+	}
+
+	// Do some postprocessing on the node data
+	details.DistributorBalance = distributorBalance
+
+	// TODO effectiveRPLStake and MinimumRPLStake are deprecated in Saturn
+	// Fix the effective stake
+	if details.EffectiveRPLStake.Cmp(details.MinimumRPLStake) == -1 {
+		details.EffectiveRPLStake.SetUint64(0)
+	}
+
+	return details, nil
+}
+
+// Gets the details for all nodes using the efficient multicall contract
+func GetAllNativeNodeDetails(rp *rocketpool.RocketPool, contracts *NetworkContracts) ([]NativeNodeDetails, error) {
+	opts := &bind.CallOpts{
+		BlockNumber: contracts.ElBlockNumber,
+	}
+
+	// Get the list of node addresses
+	addresses, err := getNodeAddressesFast(rp, contracts, opts)
+	if err != nil {
+		return nil, fmt.Errorf("error getting node addresses: %w", err)
+	}
+	count := len(addresses)
+	nodeDetails := make([]NativeNodeDetails, count)
+
+	// Sync
+	var wg errgroup.Group
+	wg.SetLimit(threadLimit)
+
+	// Run the getters in batches
+	for i := 0; i < count; i += legacyNodeBatchSize {
+		i := i
+		m := min(i+legacyNodeBatchSize, count)
+
+		wg.Go(func() error {
+			var err error
+			mc, err := multicall.NewMultiCaller(rp.Client, contracts.Multicaller.ContractAddress)
+			if err != nil {
+				return err
+			}
+			for j := i; j < m; j++ {
+				address := addresses[j]
+				details := &nodeDetails[j]
+				details.NodeAddress = address
+				details.AverageNodeFee = big.NewInt(0)
+				details.DistributorBalanceUserETH = big.NewInt(0)
+				details.DistributorBalanceNodeETH = big.NewInt(0)
+				details.CollateralisationRatio = big.NewInt(0)
+
+				err = addNodeDetailsCalls(contracts, mc, details, address)
+				if err != nil {
+					return fmt.Errorf("error adding node details calls: %w", err)
+				}
+			}
+			_, err = mc.FlexibleCall(true, opts)
+			if err != nil {
+				return fmt.Errorf("error executing multicall: %w", err)
+			}
+			return nil
+		})
+	}
+
+	if err := wg.Wait(); err != nil {
+		return nil, fmt.Errorf("error getting node details: %w", err)
+	}
+
+	// Get the balances of the nodes
+	distributorAddresses := make([]common.Address, count)
+	balances, err := contracts.BalanceBatcher.GetEthBalances(addresses, opts)
+	if err != nil {
+		return nil, fmt.Errorf("error getting node balances: %w", err)
+	}
+	for i, details := range nodeDetails {
+		nodeDetails[i].BalanceETH = balances[i]
+		distributorAddresses[i] = details.FeeDistributorAddress
+	}
+
+	// Get the balances of the distributors
+	balances, err = contracts.BalanceBatcher.GetEthBalances(distributorAddresses, opts)
+	if err != nil {
+		return nil, fmt.Errorf("error getting distributor balances: %w", err)
+	}
+
+	// Do some postprocessing on the node data
+	for i := range nodeDetails {
+		details := &nodeDetails[i]
+		details.DistributorBalance = balances[i]
+
+		// TODO effectiveRPLStake and MinimumRPLStake are deprecated in Saturn
+		// Fix the effective stake
+		if details.EffectiveRPLStake.Cmp(details.MinimumRPLStake) == -1 {
+			details.EffectiveRPLStake.SetUint64(0)
+		}
+	}
+
+	return nodeDetails, nil
+}
+
+func (node *NativeNodeDetails) WasOptedInAt(t time.Time) bool {
+	if node.SmoothingPoolRegistrationState {
+		// If a node is opted in, check if the check time is after the opt-in time
+		return t.After(time.Unix(node.SmoothingPoolRegistrationChanged.Int64(), 0))
+	}
+
+	// If the node isn't opted in and was never opted in, it's not opted in
+	if node.SmoothingPoolRegistrationChanged.Cmp(big.NewInt(0)) == 0 {
+		return false
+	}
+
+	// If a node is opted out, but was opted in, check if the check time is before the opt-out time
+	return t.Before(time.Unix(node.SmoothingPoolRegistrationChanged.Int64(), 0))
+}
+
+// Calculate the average node fee and user/node shares of the distributor's balance
+func (node *NativeNodeDetails) CalculateAverageFeeAndDistributorShares(minipoolDetails []*NativeMinipoolDetails) {
+
+	// Calculate the total of all fees for staking minipools that aren't finalized
+	totalFee := big.NewInt(0)
+	eligibleMinipools := int64(0)
+	for _, mpd := range minipoolDetails {
+		if mpd.Status == types.Staking && !mpd.Finalised {
+			totalFee.Add(totalFee, mpd.NodeFee)
+			eligibleMinipools++
+		}
+	}
+
+	// Get the average fee (0 if there aren't any minipools)
+	if eligibleMinipools > 0 {
+		node.AverageNodeFee.Div(totalFee, big.NewInt(eligibleMinipools))
+	}
+
+	// Get the user and node portions of the distributor balance
+	distributorBalance := big.NewInt(0).Set(node.DistributorBalance)
+	if distributorBalance.Cmp(big.NewInt(0)) > 0 {
+		nodeBalance := big.NewInt(0)
+		nodeBalance.Mul(distributorBalance, big.NewInt(1e18))
+		nodeBalance.Div(nodeBalance, node.CollateralisationRatio)
+
+		userBalance := big.NewInt(0)
+		userBalance.Sub(distributorBalance, nodeBalance)
+
+		if eligibleMinipools == 0 {
+			// Split it based solely on the collateralisation ratio if there are no minipools (and hence no average fee)
+			node.DistributorBalanceNodeETH = big.NewInt(0).Set(nodeBalance)
+			node.DistributorBalanceUserETH = big.NewInt(0).Sub(distributorBalance, nodeBalance)
+		} else {
+			// Amount of ETH given to the NO as a commission
+			commissionEth := big.NewInt(0)
+			commissionEth.Mul(userBalance, node.AverageNodeFee)
+			commissionEth.Div(commissionEth, big.NewInt(1e18))
+
+			node.DistributorBalanceNodeETH.Add(nodeBalance, commissionEth)                         // Node gets their portion + commission on user portion
+			node.DistributorBalanceUserETH.Sub(distributorBalance, node.DistributorBalanceNodeETH) // User gets balance - node share
+		}
+
+	} else {
+		// No distributor balance
+		node.DistributorBalanceNodeETH = big.NewInt(0)
+		node.DistributorBalanceUserETH = big.NewInt(0)
+	}
+
+}
+
+// Get all node addresses using the multicaller
+func getNodeAddressesFast(rp *rocketpool.RocketPool, contracts *NetworkContracts, opts *bind.CallOpts) ([]common.Address, error) {
+	// Get minipool count
+	nodeCount, err := node.GetNodeCount(rp, opts)
+	if err != nil {
+		return []common.Address{}, err
+	}
+
+	// Sync
+	var wg errgroup.Group
+	wg.SetLimit(threadLimit)
+	addresses := make([]common.Address, nodeCount)
+
+	// Run the getters in batches
+	count := int(nodeCount)
+	for i := 0; i < count; i += nodeAddressBatchSize {
+		i := i
+		m := min(i+nodeAddressBatchSize, count)
+
+		wg.Go(func() error {
+			var err error
+			mc, err := multicall.NewMultiCaller(rp.Client, contracts.Multicaller.ContractAddress)
+			if err != nil {
+				return err
+			}
+			for j := i; j < m; j++ {
+				err = mc.AddCall(contracts.RocketNodeManager, &addresses[j], "getNodeAt", big.NewInt(int64(j)))
+				if err != nil {
+					return fmt.Errorf("error adding node address call for index %d: %w", j, err)
+				}
+			}
+			_, err = mc.FlexibleCall(true, opts)
+			if err != nil {
+				return fmt.Errorf("error executing multicall: %w", err)
+			}
+			return nil
+		})
+	}
+
+	if err := wg.Wait(); err != nil {
+		return nil, fmt.Errorf("error getting node addresses: %w", err)
+	}
+
+	return addresses, nil
+}
+
+// Add all of the calls for the node details to the multicaller
+func addNodeDetailsCalls(contracts *NetworkContracts, mc *multicall.MultiCaller, details *NativeNodeDetails, address common.Address) error {
+	allErrors := make([]error, 0)
+	addCall := func(contract *rocketpool.Contract, out any, method string, args ...any) {
+		allErrors = append(allErrors, mc.AddCall(contract, out, method, args...))
+	}
+	addCall(contracts.RocketNodeManager, &details.Exists, "getNodeExists", address)
+	addCall(contracts.RocketNodeManager, &details.RegistrationTime, "getNodeRegistrationTime", address)
+	addCall(contracts.RocketNodeManager, &details.TimezoneLocation, "getNodeTimezoneLocation", address)
+	addCall(contracts.RocketNodeManager, &details.FeeDistributorInitialised, "getFeeDistributorInitialised", address)
+	addCall(contracts.RocketNodeDistributorFactory, &details.FeeDistributorAddress, "getProxyAddress", address)
+	addCall(contracts.RocketNodeManager, &details.RewardNetwork, "getRewardNetwork", address)
+
+	addCall(contracts.RocketMinipoolManager, &details.MinipoolCount, "getNodeMinipoolCount", address)
+	addCall(contracts.RocketTokenRETH, &details.BalanceRETH, "balanceOf", address)
+	addCall(contracts.RocketTokenRPL, &details.BalanceRPL, "balanceOf", address)
+	addCall(contracts.RocketTokenRPLFixedSupply, &details.BalanceOldRPL, "balanceOf", address)
+	addCall(contracts.RocketStorage, &details.WithdrawalAddress, "getNodeWithdrawalAddress", address)
+	addCall(contracts.RocketStorage, &details.PendingWithdrawalAddress, "getNodePendingWithdrawalAddress", address)
+	addCall(contracts.RocketNodeManager, &details.SmoothingPoolRegistrationState, "getSmoothingPoolRegistrationState", address)
+	addCall(contracts.RocketNodeManager, &details.SmoothingPoolRegistrationChanged, "getSmoothingPoolRegistrationChanged", address)
+
+	// Atlas
+	addCall(contracts.RocketNodeDeposit, &details.DepositCreditBalance, "getNodeDepositCredit", address)
+	addCall(contracts.RocketNodeStaking, &details.CollateralisationRatio, "getNodeETHCollateralisationRatio", address)
+
+	// Saturn
+	// a node's total borrowed ETH amount (minipool + megapool)
+	addCall(contracts.RocketNodeStaking, &details.EthBorrowed, "getNodeETHBorrowed", address)
+	// a node's borrowed megapool ETH amount
+	addCall(contracts.RocketNodeStaking, &details.MegapoolETHBorrowed, "getNodeMegapoolETHBorrowed", address)
+	// a node's borrowed minipool ETH amount
+	addCall(contracts.RocketNodeStaking, &details.MinipoolETHBorrowed, "getNodeMinipoolETHBorrowed", address)
+	// a node's total amount of a node operator's bonded ETH (minipool + megapool)
+	addCall(contracts.RocketNodeStaking, &details.EthBonded, "getNodeETHBonded", address)
+	// the amount of a node operator's megapool bonded ETH
+	addCall(contracts.RocketNodeStaking, &details.MegapoolEthBonded, "getNodeMegapoolETHBonded", address)
+	// the amount of a node operator's minipool bonded ETH
+	addCall(contracts.RocketNodeStaking, &details.MinipoolETHBonded, "getNodeMinipoolETHBonded", address)
+	// the amount of megapool staked RPL for a node operator
+	addCall(contracts.RocketNodeStaking, &details.MegapoolStakedRPL, "getNodeMegapoolStakedRPL", address)
+	// the amount of legacy staked RPL for a node operator
+	addCall(contracts.RocketNodeStaking, &details.LegacyStakedRPL, "getNodeLegacyStakedRPL", address)
+	// the timestamp at which a node last unstaked megapool staked RPL
+	addCall(contracts.RocketNodeStaking, &details.UnstakingRPL, "getNodeUnstakingRPL", address)
+	// the amount of RPL that is locked for a given node
+	addCall(contracts.RocketNodeStaking, &details.LockedRPL, "getNodeLockedRPL", address)
+	addCall(contracts.RocketMegapoolFactory, &details.MegapoolAddress, "getExpectedAddress", address)
+	addCall(contracts.RocketMegapoolFactory, &details.MegapoolDeployed, "getMegapoolDeployed", address)
+
+	for _, err := range allErrors {
+		if err != nil {
+			return fmt.Errorf("error adding node details call: %w", err)
+		}
+	}
+	return nil
+}

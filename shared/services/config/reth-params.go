@@ -4,13 +4,14 @@ import (
 	"runtime"
 
 	"github.com/pbnjay/memory"
+
 	"github.com/rocket-pool/smartnode/shared/types/config"
 )
 
 // Constants
 const (
-	rethTagProd          string = "ghcr.io/paradigmxyz/reth:v1.0.3"
-	rethTagTest          string = "ghcr.io/paradigmxyz/reth:v1.0.3"
+	rethTagProd          string = "ghcr.io/paradigmxyz/reth:v2.5.0"
+	rethTagTest          string = "ghcr.io/paradigmxyz/reth:v2.5.0"
 	rethEventLogInterval int    = 1000
 	rethStopSignal       string = "SIGTERM"
 )
@@ -31,11 +32,11 @@ type RethConfig struct {
 	// Size of Reth's Cache
 	CacheSize config.Parameter `yaml:"cacheSize,omitempty"`
 
-	// Max number of P2P peers to connect to
+	// Max number of P2P peers to connect to. For Reth this will map to max outbound peers
 	MaxPeers config.Parameter `yaml:"maxPeers,omitempty"`
 
-	// The archive mode flag
-	ArchiveMode config.Parameter `yaml:"archiveMode,omitempty"`
+	// Max number of P2P inbound peers to connect to.
+	MaxInboundPeers config.Parameter `yaml:"maxInboundPeers,omitempty"`
 
 	// The Docker Hub tag for Reth
 	ContainerTag config.Parameter `yaml:"containerTag,omitempty"`
@@ -74,8 +75,8 @@ func NewRethConfig(cfg *RocketPoolConfig) *RethConfig {
 
 		MaxPeers: config.Parameter{
 			ID:                 "maxPeers",
-			Name:               "Max Peers",
-			Description:        "The maximum number of peers Reth should connect to. This can be lowered to improve performance on low-power systems or constrained networks. We recommend keeping it at 12 or higher.",
+			Name:               "Max Outbound Peers",
+			Description:        "The maximum number of outbound peers Reth should connect to. This can be lowered to improve performance on low-power systems or constrained networks. We recommend keeping it at 12 or higher.",
 			Type:               config.ParameterType_Uint16,
 			Default:            map[config.Network]interface{}{config.Network_All: calculateRethPeers()},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
@@ -83,14 +84,14 @@ func NewRethConfig(cfg *RocketPoolConfig) *RethConfig {
 			OverwriteOnUpgrade: false,
 		},
 
-		ArchiveMode: config.Parameter{
-			ID:                 "archiveMode",
-			Name:               "Enable Archive Mode",
-			Description:        "When enabled, Reth will run in \"archive\" mode which means it can recreate the state of the chain for a previous block. This is required for manually generating the Merkle rewards tree.\n\nIf you are sure you will never be manually generating a tree, you can disable archive mode.",
-			Type:               config.ParameterType_Bool,
-			Default:            map[config.Network]interface{}{config.Network_All: false},
+		MaxInboundPeers: config.Parameter{
+			ID:                 "maxInboundPeers",
+			Name:               "Max Inbound Peers",
+			Description:        "The maximum number of inbound peers Reth should connect to. This can be lowered to improve performance on low-power systems or constrained networks. We recommend keeping it at 12 or higher.",
+			Type:               config.ParameterType_Uint16,
+			Default:            map[config.Network]interface{}{config.Network_All: uint16(30)},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
-			CanBeBlank:         true,
+			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
 
@@ -101,7 +102,7 @@ func NewRethConfig(cfg *RocketPoolConfig) *RethConfig {
 			Type:        config.ParameterType_String,
 			Default: map[config.Network]interface{}{
 				config.Network_Mainnet: rethTagProd,
-				config.Network_Holesky: rethTagTest,
+				config.Network_Testnet: rethTagTest,
 				config.Network_Devnet:  rethTagTest,
 			},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
@@ -112,7 +113,7 @@ func NewRethConfig(cfg *RocketPoolConfig) *RethConfig {
 		AdditionalFlags: config.Parameter{
 			ID:                 "additionalFlags",
 			Name:               "Additional Flags",
-			Description:        "Additional custom command line flags you want to pass to Reth, to take advantage of other settings that the Smartnode's configuration doesn't cover.",
+			Description:        "Additional custom command line flags you want to pass to Reth, to take advantage of other settings that the Smart Node's configuration doesn't cover.",
 			Type:               config.ParameterType_String,
 			Default:            map[config.Network]interface{}{config.Network_All: ""},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
@@ -128,27 +129,31 @@ func calculateRethCache() uint64 {
 
 	if totalMemoryGB == 0 {
 		return 0
-	} else if totalMemoryGB < 9 {
-		return 256
-	} else if totalMemoryGB < 13 {
-		return 2048
-	} else if totalMemoryGB < 17 {
-		return 4096
-	} else if totalMemoryGB < 25 {
-		return 8192
-	} else if totalMemoryGB < 33 {
-		return 12288
-	} else {
-		return 16384
 	}
+	if totalMemoryGB < 9 {
+		return 256
+	}
+	if totalMemoryGB < 13 {
+		return 2048
+	}
+	if totalMemoryGB < 17 {
+		return 4096
+	}
+	if totalMemoryGB < 25 {
+		return 8192
+	}
+	if totalMemoryGB < 33 {
+		return 12288
+	}
+	return 16384
 }
 
 // Calculate the default number of Reth peers
 func calculateRethPeers() uint16 {
 	if runtime.GOARCH == "arm64" {
-		return 25
+		return 50
 	}
-	return 50
+	return 100
 }
 
 // Get the config.Parameters for this config
@@ -156,13 +161,13 @@ func (cfg *RethConfig) GetParameters() []*config.Parameter {
 	return []*config.Parameter{
 		&cfg.CacheSize,
 		&cfg.MaxPeers,
-		&cfg.ArchiveMode,
+		&cfg.MaxInboundPeers,
 		&cfg.ContainerTag,
 		&cfg.AdditionalFlags,
 	}
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *RethConfig) GetConfigTitle() string {
 	return cfg.Title
 }

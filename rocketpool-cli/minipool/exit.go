@@ -5,18 +5,20 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/types"
-	"github.com/urfave/cli"
 
+	"github.com/rocket-pool/smartnode/bindings/types"
+
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/color"
+	"github.com/rocket-pool/smartnode/rocketpool-cli/cli/prompt"
 	"github.com/rocket-pool/smartnode/shared/services/rocketpool"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
 )
 
-func exitMinipools(c *cli.Context) error {
+func exitMinipools(minipool string, yes bool) error {
 
 	// Get RP client
-	rp, err := rocketpool.NewClientFromCtx(c).WithReady()
+	rp, err := rocketpool.NewClient().WithReady()
 	if err != nil {
 		return err
 	}
@@ -44,19 +46,19 @@ func exitMinipools(c *cli.Context) error {
 
 	// Get selected minipools
 	var selectedMinipools []api.MinipoolDetails
-	if c.String("minipool") == "" {
+	if minipool == "" {
 
 		// Prompt for minipool selection
 		options := make([]string, len(activeMinipools)+1)
 		options[0] = "All available minipools"
 		for mi, minipool := range activeMinipools {
 			if minipool.Status.Status == types.Staking {
-				options[mi+1] = fmt.Sprintf("%s (staking since %s)", minipool.Address.Hex(), minipool.Status.StatusTime.Format(TimeFormat))
+				options[mi+1] = fmt.Sprintf("%s (staking since %s)", minipool.Address.Hex(), minipool.Status.StatusTime.Format(cliutils.TimeFormat))
 			} else {
-				options[mi+1] = fmt.Sprintf("%s (dissolved since %s)", minipool.Address.Hex(), minipool.Status.StatusTime.Format(TimeFormat))
+				options[mi+1] = fmt.Sprintf("%s (dissolved since %s)", minipool.Address.Hex(), minipool.Status.StatusTime.Format(cliutils.TimeFormat))
 			}
 		}
-		selected, _ := cliutils.Select("Please select a minipool to exit:", options)
+		selected, _ := prompt.Select("Please select a minipool to exit:", options)
 
 		// Get minipools
 		if selected == 0 {
@@ -68,10 +70,10 @@ func exitMinipools(c *cli.Context) error {
 	} else {
 
 		// Get matching minipools
-		if c.String("minipool") == "all" {
+		if minipool == "all" {
 			selectedMinipools = activeMinipools
 		} else {
-			selectedAddress := common.HexToAddress(c.String("minipool"))
+			selectedAddress := common.HexToAddress(minipool)
 			for _, minipool := range activeMinipools {
 				if bytes.Equal(minipool.Address.Bytes(), selectedAddress.Bytes()) {
 					selectedMinipools = []api.MinipoolDetails{minipool}
@@ -86,14 +88,16 @@ func exitMinipools(c *cli.Context) error {
 	}
 
 	// Show a warning message
-	fmt.Printf("%sNOTE:\n", colorYellow)
-	fmt.Println("You are about to exit your minipool. This will tell each one's validator to stop all activities on the Beacon Chain.")
-	fmt.Println("Please continue to run your validators until each one you've exited has been processed by the exit queue.\nYou can watch their progress on the https://beaconcha.in explorer.")
-	fmt.Println("Your funds will be locked on the Beacon Chain until they've been withdrawn, which will happen automatically (this may take a few days).")
-	fmt.Printf("Once your funds have been withdrawn, you can run `rocketpool minipool close` to distribute them to your withdrawal address and close the minipool.\n\n%s", colorReset)
+	color.YellowPrintln("NOTE:")
+	color.YellowPrintln("You are about to exit your minipool. This will tell each one's validator to stop all activities on the Beacon Chain.")
+	color.YellowPrintln("Please continue to run your validators until each one you've exited has been processed by the exit queue.")
+	color.YellowPrintln("You can watch their progress on the https://beaconcha.in explorer.")
+	color.YellowPrintln("Your funds will be locked on the Beacon Chain until they've been withdrawn, which will happen automatically (this may take a few days).")
+	color.YellowPrintln("Once your funds have been withdrawn, you can run `rocketpool minipool close` to distribute them to your withdrawal address and close the minipool.")
+	fmt.Println()
 
 	// Prompt for confirmation
-	if !(c.Bool("yes") || cliutils.ConfirmWithIAgree(fmt.Sprintf("Are you sure you want to exit %d minipool(s)? This action cannot be undone!", len(selectedMinipools)))) {
+	if !yes && !prompt.ConfirmWithIAgree("Are you sure you want to exit %d minipool(s)? This action cannot be undone!", len(selectedMinipools)) {
 		fmt.Println("Cancelled.")
 		return nil
 	}

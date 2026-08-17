@@ -2,21 +2,24 @@ package config
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+
 	cfgtypes "github.com/rocket-pool/smartnode/shared/types/config"
 )
 
 // A layout container with the standard elements and design
 type standardLayout struct {
-	grid           *tview.Grid
-	content        tview.Primitive
-	descriptionBox *tview.TextView
-	footer         tview.Primitive
-	form           *Form
-	parameters     map[tview.FormItem]*parameterizedFormItem
-	cfg            cfgtypes.Config
+	grid              *tview.Grid
+	content           tview.Primitive
+	descriptionBox    *tview.TextView
+	errorAlert        *tview.TextView
+	footer            tview.Primitive
+	form              *Form
+	parameters        map[tview.FormItem]*parameterizedFormItem
+	commitErrorActive bool
 }
 
 // Creates a new StandardLayout instance, which includes the grid and description box preconstructed.
@@ -99,6 +102,9 @@ func (layout *standardLayout) createForm(networkParam *cfgtypes.Parameter, title
 	})
 
 	layout.form = form
+	layout.form.SetNavigationBlocked(func() bool {
+		return layout.commitErrorActive
+	})
 	layout.setContent(form, form.Box, title)
 	layout.createSettingFooter()
 }
@@ -132,8 +138,72 @@ func (layout *standardLayout) refresh() {
 
 }
 
+// Shows an error alert at the bottom of the screen, or clears it when message is empty.
+func (layout *standardLayout) showCommitError(message string) {
+	layout.commitErrorActive = message != ""
+	if layout.errorAlert == nil {
+		return
+	}
+	if message == "" {
+		layout.errorAlert.SetText("")
+		return
+	}
+	layout.errorAlert.SetText("[red::b]" + message + "[-:-:-]")
+}
+
+func (layout *standardLayout) commitFocusedInputField() {
+	for _, param := range layout.parameters {
+		if _, ok := param.item.(*tview.InputField); ok && param.item.HasFocus() {
+			param.commit()
+			return
+		}
+	}
+}
+
+func (layout *standardLayout) navCapture(event *tcell.EventKey) *tcell.EventKey {
+	if layout.commitErrorActive {
+		switch event.Key() {
+		case tcell.KeyDown, tcell.KeyTab:
+			layout.commitFocusedInputField()
+			if layout.commitErrorActive {
+				return nil
+			}
+			return tcell.NewEventKey(tcell.KeyTab, 0, 0)
+		case tcell.KeyUp, tcell.KeyBacktab:
+			return nil
+		}
+		return event
+	}
+	switch event.Key() {
+	case tcell.KeyDown, tcell.KeyTab:
+		return tcell.NewEventKey(tcell.KeyTab, 0, 0)
+	case tcell.KeyUp, tcell.KeyBacktab:
+		return tcell.NewEventKey(tcell.KeyBacktab, 0, 0)
+	}
+	return event
+}
+
+func (layout *standardLayout) setItemNavCapture(item *parameterizedFormItem) {
+	capture := layout.navCapture
+	switch el := item.item.(type) {
+	case *tview.Checkbox:
+		el.SetInputCapture(capture)
+	case *tview.InputField:
+		el.SetInputCapture(capture)
+	case *DropDown:
+		el.SetInputCapture(capture)
+	}
+}
+
 // Create the footer, including the nav bar
 func (layout *standardLayout) createSettingFooter() {
+
+	layout.errorAlert = tview.NewTextView().
+		SetDynamicColors(true).
+		SetTextAlign(tview.AlignCenter).
+		SetWrap(false).
+		SetRegions(false)
+	layout.errorAlert.SetBackgroundColor(tview.Styles.ContrastBackgroundColor)
 
 	// Nav bar
 	navString1 := "Arrow keys: Navigate   Space/Enter: Change Setting"
@@ -141,14 +211,20 @@ func (layout *standardLayout) createSettingFooter() {
 		SetDynamicColors(false).
 		SetRegions(false).
 		SetWrap(false)
-	fmt.Fprint(navTextView1, navString1)
+	_, err := fmt.Fprint(navTextView1, navString1)
+	if err != nil {
+		panic(fmt.Errorf("error writing nav string 1: %w", err))
+	}
 
-	navString2 := "Esc: Go Back to Categories"
+	navString2 := "Esc: Go Back to Categories (saves changes)"
 	navTextView2 := tview.NewTextView().
 		SetDynamicColors(false).
 		SetRegions(false).
 		SetWrap(false)
-	fmt.Fprint(navTextView2, navString2)
+	_, err = fmt.Fprint(navTextView2, navString2)
+	if err != nil {
+		panic(fmt.Errorf("error writing nav string 2: %w", err))
+	}
 
 	navBar := tview.NewFlex().
 		SetDirection(tview.FlexRow).
@@ -163,7 +239,12 @@ func (layout *standardLayout) createSettingFooter() {
 			AddItem(tview.NewBox(), 0, 1, false),
 			1, 1, false)
 
-	layout.setFooter(navBar, 2)
+	footer := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(layout.errorAlert, 1, 0, false).
+		AddItem(navBar, 2, 1, false)
+
+	layout.setFooter(footer, 3)
 
 }
 
@@ -181,11 +262,8 @@ func (layout *standardLayout) addFormItemsWithCommonParams(commonParams []*param
 	// Add the common params if they aren't in the unsupported list
 	for _, commonParam := range commonParams {
 		isSupported := true
-		for _, unsupportedParam := range unsupportedCommonParams {
-			if commonParam.parameter.ID == unsupportedParam {
-				isSupported = false
-				break
-			}
+		if slices.Contains(unsupportedCommonParams, commonParam.parameter.ID) {
+			isSupported = false
 		}
 
 		if isSupported {
@@ -202,26 +280,50 @@ func (layout *standardLayout) addFormItemsWithCommonParams(commonParams []*param
 
 func (layout *standardLayout) mapParameterizedFormItems(params ...*parameterizedFormItem) {
 	for _, param := range params {
+		if layout != nil {
+			param.onCommitError = layout.showCommitError
+			layout.setItemNavCapture(param)
+		}
 		layout.parameters[param.item] = param
 	}
 }
 
-// Sets up a handler to return to the specified homePage when the user presses escape on the layout.
-func (layout *standardLayout) setupEscapeReturnHomeHandler(md *mainDisplay, homePage *page) {
-	layout.grid.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		// Return to the home page
+func (layout *standardLayout) getInputCapture(md *MainDisplay, prev *page) func(event *tcell.EventKey) *tcell.EventKey {
+	return func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEsc {
 			// Close all dropdowns and break if one was open
+			// Save the current modifications to text parameters
 			for _, param := range layout.parameters {
-				dropDown, ok := param.item.(*DropDown)
-				if ok && dropDown.open {
+				formItem := param.item
+				if !formItem.HasFocus() {
+					continue
+				}
+
+				// Close the dropdown if this field is one and it is open
+				if dropDown, ok := param.item.(*DropDown); ok && dropDown.open {
 					dropDown.CloseList(md.app)
 					return nil
 				}
+
+				// Save the text if this field is one
+				if _, ok := param.item.(*tview.InputField); ok {
+					layout.commitFocusedInputField()
+					break
+				}
 			}
-			md.setPage(homePage)
+
+			if layout.commitErrorActive {
+				return nil
+			}
+
+			md.setPage(prev)
 			return nil
 		}
 		return event
-	})
+	}
+}
+
+// Sets up a handler to return to the specified homePage when the user presses escape on the layout.
+func (layout *standardLayout) setupEscapeReturnHomeHandler(md *MainDisplay, homePage *page) {
+	layout.grid.SetInputCapture(layout.getInputCapture(md, homePage))
 }

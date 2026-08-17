@@ -7,23 +7,24 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/rocket-pool/rocketpool-go/minipool"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	rptypes "github.com/rocket-pool/rocketpool-go/types"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/rocket-pool/smartnode/bindings/minipool"
+	"github.com/rocket-pool/smartnode/bindings/rocketpool"
+	"github.com/rocket-pool/smartnode/bindings/transactions/gaslimit"
+	rptypes "github.com/rocket-pool/smartnode/bindings/types"
+
+	"github.com/rocket-pool/smartnode/rocketpool/validator"
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/services/beacon"
 	"github.com/rocket-pool/smartnode/shared/services/contracts"
 	"github.com/rocket-pool/smartnode/shared/services/wallet"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
-	"github.com/rocket-pool/smartnode/shared/utils/validator"
 )
 
-func getMinipoolRescueDissolvedDetailsForNode(c *cli.Context) (*api.GetMinipoolRescueDissolvedDetailsForNodeResponse, error) {
+func getMinipoolRescueDissolvedDetailsForNode(c *cli.Command) (*api.GetMinipoolRescueDissolvedDetailsForNodeResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
@@ -91,7 +92,7 @@ func getMinipoolRescueDissolvedDetailsForNode(c *cli.Context) (*api.GetMinipoolR
 
 }
 
-func getMinipoolRescueDissolvedDetails(rp *rocketpool.RocketPool, w *wallet.Wallet, bc beacon.Client, minipoolAddress common.Address, nodeAddress common.Address) (api.MinipoolRescueDissolvedDetails, error) {
+func getMinipoolRescueDissolvedDetails(rp *rocketpool.RocketPool, w wallet.Wallet, bc beacon.Client, minipoolAddress common.Address, nodeAddress common.Address) (api.MinipoolRescueDissolvedDetails, error) {
 
 	// Create minipool
 	mp, err := minipool.NewMinipool(rp, minipoolAddress, nil)
@@ -173,7 +174,7 @@ func getMinipoolRescueDissolvedDetails(rp *rocketpool.RocketPool, w *wallet.Wall
 	details.BeaconBalance = big.NewInt(0).Mul(beaconBalanceGwei, big.NewInt(1e9))
 
 	// Make sure it doesn't already have 32 ETH in it
-	requiredBalance := eth.EthToWei(32)
+	requiredBalance := math.EthToWei(32)
 	if details.BeaconBalance.Cmp(requiredBalance) >= 0 {
 		details.CanRescue = false
 		return details, nil
@@ -183,7 +184,7 @@ func getMinipoolRescueDissolvedDetails(rp *rocketpool.RocketPool, w *wallet.Wall
 	details.CanRescue = true
 
 	// Get the simulated deposit TX
-	one := eth.EthToWei(1)
+	one := math.EthToWei(1)
 	opts, err := w.GetNodeAccountTransactor()
 	if err != nil {
 		return api.MinipoolRescueDissolvedDetails{}, err
@@ -206,9 +207,9 @@ func getMinipoolRescueDissolvedDetails(rp *rocketpool.RocketPool, w *wallet.Wall
 		safeGasLimit = rocketpool.MaxGasLimit
 	}
 
-	details.GasInfo = rocketpool.GasInfo{
-		EstGasLimit:  gasLimit,
-		SafeGasLimit: safeGasLimit,
+	details.GasLimits = gaslimit.Limits{
+		Estimated: gasLimit,
+		Safe:      safeGasLimit,
 	}
 
 	return details, nil
@@ -216,7 +217,7 @@ func getMinipoolRescueDissolvedDetails(rp *rocketpool.RocketPool, w *wallet.Wall
 }
 
 // Create a transaction for submitting a rescue deposit, optionally simulating it only for gas estimation
-func getDepositTx(rp *rocketpool.RocketPool, w *wallet.Wallet, bc beacon.Client, minipoolAddress common.Address, amount *big.Int, opts *bind.TransactOpts) (*types.Transaction, error) {
+func getDepositTx(rp *rocketpool.RocketPool, w wallet.Wallet, bc beacon.Client, minipoolAddress common.Address, amount *big.Int, opts *bind.TransactOpts) (*types.Transaction, error) {
 
 	blankAddress := common.Address{}
 	casperAddress, err := rp.GetAddress("casperDeposit", nil)
@@ -281,7 +282,7 @@ func getDepositTx(rp *rocketpool.RocketPool, w *wallet.Wallet, bc beacon.Client,
 
 }
 
-func rescueDissolvedMinipool(c *cli.Context, minipoolAddress common.Address, amount *big.Int) (*api.RescueDissolvedMinipoolResponse, error) {
+func rescueDissolvedMinipool(c *cli.Command, minipoolAddress common.Address, amount *big.Int, submit bool, opts *bind.TransactOpts) (*api.RescueDissolvedMinipoolResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
@@ -303,24 +304,25 @@ func rescueDissolvedMinipool(c *cli.Context, minipoolAddress common.Address, amo
 	// Response
 	response := api.RescueDissolvedMinipoolResponse{}
 
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
 	opts.Value = amount
 
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
-	}
+	opts.NoSend = !submit
 
 	// Submit the rescue deposit
 	tx, err := getDepositTx(rp, w, bc, minipoolAddress, amount, opts)
 	if err != nil {
 		return nil, fmt.Errorf("error submitting rescue deposit: %w", err)
 	}
+
+	// Print transaction if requested
+	if !submit {
+		b, err := tx.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
+		fmt.Printf("%x\n", b)
+	}
+
 	response.TxHash = tx.Hash()
 
 	// Return response

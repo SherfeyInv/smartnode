@@ -5,19 +5,20 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/minipool"
-	"github.com/rocket-pool/rocketpool-go/types"
-	"github.com/rocket-pool/rocketpool-go/utils/eth"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/rocket-pool/smartnode/bindings/minipool"
+	"github.com/rocket-pool/smartnode/bindings/types"
+
+	"github.com/rocket-pool/smartnode/shared/math"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func getDistributeBalanceDetails(c *cli.Context) (*api.GetDistributeBalanceDetailsResponse, error) {
+func getDistributeBalanceDetails(c *cli.Command) (*api.GetDistributeBalanceDetailsResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
@@ -132,7 +133,8 @@ func getDistributeBalanceDetails(c *cli.Context) (*api.GetDistributeBalanceDetai
 				}
 
 				// Handle staking minipools
-				if minipoolDetails.Status == types.Staking {
+				switch minipoolDetails.Status {
+				case types.Staking:
 					// Ignore minipools with a balance lower than the refund
 					if minipoolDetails.Balance.Cmp(minipoolDetails.Refund) == -1 {
 						minipoolDetails.CanDistribute = false
@@ -141,7 +143,7 @@ func getDistributeBalanceDetails(c *cli.Context) (*api.GetDistributeBalanceDetai
 
 					// Ignore minipools with an effective balance higher than v3 rewards-vs-exit cap
 					distributableBalance := big.NewInt(0).Sub(minipoolDetails.Balance, minipoolDetails.Refund)
-					eight := eth.EthToWei(8)
+					eight := math.EthToWei(8)
 					if distributableBalance.Cmp(eight) >= 0 {
 						minipoolDetails.CanDistribute = false
 						return nil
@@ -152,10 +154,10 @@ func getDistributeBalanceDetails(c *cli.Context) (*api.GetDistributeBalanceDetai
 					if err != nil {
 						return fmt.Errorf("error calculating node share for minipool %s: %w", address.Hex(), err)
 					}
-				} else if minipoolDetails.Status == types.Dissolved {
+				case types.Dissolved:
 					// Dissolved but non-finalized / non-closed minipools can just have the whole balance sent back to the NO
 					minipoolDetails.NodeShareOfBalance = minipoolDetails.Balance
-				} else {
+				default:
 					// Can't distribute in any other state
 					minipoolDetails.CanDistribute = false
 					return nil
@@ -170,7 +172,7 @@ func getDistributeBalanceDetails(c *cli.Context) (*api.GetDistributeBalanceDetai
 				if !success {
 					return fmt.Errorf("minipool %s cannot be converted to v3 (current version: %d)", address.Hex(), minipoolDetails.MinipoolVersion)
 				}
-				minipoolDetails.GasInfo, err = mpv3.EstimateDistributeBalanceGas(true, opts)
+				minipoolDetails.GasLimits, err = mpv3.EstimateDistributeBalanceGas(true, opts)
 				if err != nil {
 					return fmt.Errorf("error estimating gas to distribute minipool %s: %w", address.Hex(), err)
 				}
@@ -191,14 +193,10 @@ func getDistributeBalanceDetails(c *cli.Context) (*api.GetDistributeBalanceDetai
 
 }
 
-func distributeBalance(c *cli.Context, minipoolAddress common.Address) (*api.CloseMinipoolResponse, error) {
+func distributeBalance(c *cli.Command, minipoolAddress common.Address, opts *bind.TransactOpts) (*api.CloseMinipoolResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
-	if err != nil {
 		return nil, err
 	}
 	rp, err := services.GetRocketPool(c)
@@ -213,18 +211,6 @@ func distributeBalance(c *cli.Context, minipoolAddress common.Address) (*api.Clo
 	mp, err := minipool.NewMinipool(rp, minipoolAddress, nil)
 	if err != nil {
 		return nil, err
-	}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
 	}
 
 	// Distribute the minipool's balance

@@ -4,19 +4,20 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rocket-pool/rocketpool-go/node"
-	"github.com/rocket-pool/rocketpool-go/rocketpool"
-	"github.com/rocket-pool/rocketpool-go/settings/protocol"
+
+	"github.com/urfave/cli/v3"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/node"
+	"github.com/rocket-pool/smartnode/bindings/settings/protocol"
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
-	"github.com/urfave/cli"
-	"golang.org/x/sync/errgroup"
 )
 
-func canProposeSetting(c *cli.Context, contractName string, settingName string, value string) (*api.CanProposePDAOSettingResponse, error) {
+func canProposeSetting(c *cli.Command, contractName string, settingName string, value string) (*api.CanProposePDAOSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -61,14 +62,14 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 	// Get the node's RPL stake
 	wg.Go(func() error {
 		var err error
-		stakedRpl, err = node.GetNodeRPLStake(rp, nodeAccount.Address, nil)
+		stakedRpl, err = node.GetNodeStakedRPL(rp, nodeAccount.Address, nil)
 		return err
 	})
 
 	// Get the node's locked RPL
 	wg.Go(func() error {
 		var err error
-		lockedRpl, err = node.GetNodeRPLLocked(rp, nodeAccount.Address, nil)
+		lockedRpl, err = node.GetNodeLockedRPL(rp, nodeAccount.Address, nil)
 		return err
 	})
 
@@ -100,7 +101,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 	response.InsufficientRpl = (freeRpl.Cmp(proposalBond) < 0)
 
 	// return if proposing is not possible
-	response.CanPropose = !(response.InsufficientRpl || response.IsRplLockingDisallowed)
+	response.CanPropose = !response.InsufficientRpl && !response.IsRplLockingDisallowed
 	if !response.CanPropose {
 		return &response, nil
 	}
@@ -129,7 +130,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeCreateLotEnabledGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeCreateLotEnabledGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing CreateLotEnabled: %w", err)
 			}
@@ -140,7 +141,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeBidOnLotEnabledGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeBidOnLotEnabledGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing BidOnLotEnabled: %w", err)
 			}
@@ -151,7 +152,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeLotMinimumEthValueGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeLotMinimumEthValueGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing LotMinimumEthValue: %w", err)
 			}
@@ -162,7 +163,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeLotMaximumEthValueGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeLotMaximumEthValueGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing LotMaximumEthValue: %w", err)
 			}
@@ -173,7 +174,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeLotDurationGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeLotDurationGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing LotDuration: %w", err)
 			}
@@ -184,7 +185,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeLotStartingPriceRatioGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeLotStartingPriceRatioGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing LotStartingPriceRatio: %w", err)
 			}
@@ -195,7 +196,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeLotReservePriceRatioGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeLotReservePriceRatioGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing LotReservePriceRatio: %w", err)
 			}
@@ -209,7 +210,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeDepositEnabledGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeDepositEnabledGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing DepositEnabled: %w", err)
 			}
@@ -220,7 +221,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeAssignDepositsEnabledGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeAssignDepositsEnabledGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing AssignDepositsEnabled: %w", err)
 			}
@@ -231,7 +232,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeMinimumDepositGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeMinimumDepositGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing MinimumDeposit: %w", err)
 			}
@@ -242,7 +243,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeMaximumDepositPoolSizeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeMaximumDepositPoolSizeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing MaximumDepositPoolSize: %w", err)
 			}
@@ -253,7 +254,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeMaximumDepositAssignmentsGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeMaximumDepositAssignmentsGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing MaximumDepositAssignments: %w", err)
 			}
@@ -264,7 +265,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeMaximumSocializedDepositAssignmentsGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeMaximumSocializedDepositAssignmentsGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing MaximumSocializedDepositAssignments: %w", err)
 			}
@@ -275,7 +276,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeDepositFeeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeDepositFeeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing DepositFee: %w", err)
 			}
@@ -289,7 +290,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeMinipoolSubmitWithdrawableEnabledGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeMinipoolSubmitWithdrawableEnabledGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing MinipoolSubmitWithdrawableEnabled: %w", err)
 			}
@@ -300,7 +301,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeMinipoolLaunchTimeoutGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeMinipoolLaunchTimeoutGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing MinipoolLaunchTimeout: %w", err)
 			}
@@ -311,7 +312,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeBondReductionEnabledGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeBondReductionEnabledGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing BondReductionEnabled: %w", err)
 			}
@@ -322,7 +323,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeMaximumMinipoolCountGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeMaximumMinipoolCountGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing MaximumMinipoolCount: %w", err)
 			}
@@ -333,7 +334,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeMinipoolUserDistributeWindowStartGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeMinipoolUserDistributeWindowStartGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing MinipoolUserDistributeWindowStart: %w", err)
 			}
@@ -344,7 +345,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeMinipoolUserDistributeWindowLengthGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeMinipoolUserDistributeWindowLengthGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing MinipoolUserDistributeWindowLength: %w", err)
 			}
@@ -358,7 +359,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeNodeConsensusThresholdGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeNodeConsensusThresholdGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing NodeConsensusThreshold: %w", err)
 			}
@@ -369,7 +370,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeSubmitBalancesEnabledGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeSubmitBalancesEnabledGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing SubmitBalancesEnabled: %w", err)
 			}
@@ -380,7 +381,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeSubmitBalancesFrequencyGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeSubmitBalancesFrequencyGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing SubmitBalancesFrequency: %w", err)
 			}
@@ -391,7 +392,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeSubmitPricesEnabledGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeSubmitPricesEnabledGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing SubmitPricesEnabled: %w", err)
 			}
@@ -402,7 +403,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeSubmitPricesFrequencyGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeSubmitPricesFrequencyGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing SubmitPricesFrequency: %w", err)
 			}
@@ -413,7 +414,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeMinimumNodeFeeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeMinimumNodeFeeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing MinimumNodeFee: %w", err)
 			}
@@ -424,7 +425,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeTargetNodeFeeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeTargetNodeFeeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing TargetNodeFee: %w", err)
 			}
@@ -435,7 +436,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeMaximumNodeFeeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeMaximumNodeFeeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing MaximumNodeFee: %w", err)
 			}
@@ -446,7 +447,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeNodeFeeDemandRangeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeNodeFeeDemandRangeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing NodeFeeDemandRange: %w", err)
 			}
@@ -457,7 +458,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeTargetRethCollateralRateGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeTargetRethCollateralRateGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing TargetRethCollateralRate: %w", err)
 			}
@@ -468,7 +469,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeNetworkPenaltyThresholdGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeNetworkPenaltyThresholdGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing NetworkPenaltyThreshold: %w", err)
 			}
@@ -479,7 +480,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeNetworkPenaltyPerRateGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeNetworkPenaltyPerRateGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing NetworkPenaltyPerRate: %w", err)
 			}
@@ -490,10 +491,72 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeSubmitRewardsEnabledGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeSubmitRewardsEnabledGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing SubmitRewardsEnabled: %w", err)
 			}
+
+		// NodeShare
+		case protocol.NetworkNodeCommissionSharePath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = protocol.EstimateProposeNodeShareGas(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing NodeShare: %w", err)
+			}
+		// NodeShareSecurityCouncilAdder
+		case protocol.NetworkNodeCommissionShareSecurityCouncilAdderPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = protocol.EstimateProposeNodeShareSecurityCouncilAdderGas(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing NodeShareSecurityCouncilAdder: %w", err)
+			}
+		// VoterShare
+		case protocol.NetworkVoterSharePath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = protocol.EstimateProposeVoterShareGas(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing VoterShare: %w", err)
+			}
+		// ProtocolDAOShare
+		case protocol.NetworkPDAOSharePath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = protocol.EstimateProposeProtocolDAOShare(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing ProtocolDAOShare: %w", err)
+			}
+		//MaxNodeShareSecurityCouncilAdder
+		case protocol.NetworkMaxNodeShareSecurityCouncilAdderPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = protocol.EstimateMaxNodeShareSecurityCouncilAdder(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing MaxNodeShareSecurityCouncilAdder: %w", err)
+			}
+		//MaxRethBalanceDelta
+		case protocol.NetworkMaxRethBalanceDeltaPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = protocol.EstimateMaxRethDeltaGas(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing MaxRethBalanceDelta: %w", err)
+			}
+
 		}
 
 	case protocol.NodeSettingsContractName:
@@ -504,7 +567,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeNodeRegistrationEnabledGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeNodeRegistrationEnabledGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing NodeRegistrationEnabled: %w", err)
 			}
@@ -515,7 +578,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeSmoothingPoolRegistrationEnabledGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeSmoothingPoolRegistrationEnabledGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing SmoothingPoolRegistrationEnabled: %w", err)
 			}
@@ -526,7 +589,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeNodeDepositEnabledGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeNodeDepositEnabledGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing NodeDepositEnabled: %w", err)
 			}
@@ -537,32 +600,42 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeVacantMinipoolsEnabledGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeVacantMinipoolsEnabledGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing VacantMinipoolsEnabled: %w", err)
 			}
-
-		// MinimumPerMinipoolStake
-		case protocol.MinimumPerMinipoolStakeSettingPath:
+		// MinimumLegacyRplStake
+		case protocol.MinimumLegacyRplStakePath:
 			newValue, err := cliutils.ValidateBigInt(valueName, value)
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeMinimumPerMinipoolStakeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeMinimumLecacyRPLStakeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
-				return nil, fmt.Errorf("error estimating gas for proposing MinimumPerMinipoolStake: %w", err)
+				return nil, fmt.Errorf("error estimating gas for proposing MinimumLegacyRplStake: %w", err)
 			}
 
-		// MaximumPerMinipoolStake
-		case protocol.MaximumPerMinipoolStakeSettingPath:
+		// ReducedBond
+		case protocol.ReducedBondSettingPath:
 			newValue, err := cliutils.ValidateBigInt(valueName, value)
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeMaximumPerMinipoolStakeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeReducedBond(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
-				return nil, fmt.Errorf("error estimating gas for proposing MaximumPerMinipoolStake: %w", err)
+				return nil, fmt.Errorf("error estimating gas for proposing ReducedBond: %w", err)
 			}
+		// NodeUnstakingPeriod
+		case protocol.NodeUnstakingPeriodSettingPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = protocol.EstimateProposeNodeUnstakingPeriod(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing NodeUnstakingPeriod: %w", err)
+			}
+
 		}
 
 	case protocol.ProposalsSettingsContractName:
@@ -573,7 +646,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeVotePhase1TimeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeVotePhase1TimeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing VoteTime: %w", err)
 			}
@@ -583,7 +656,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeVotePhase2TimeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeVotePhase2TimeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing VoteTime: %w", err)
 			}
@@ -593,7 +666,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeVoteDelayTimeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeVoteDelayTimeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing VoteDelayTime: %w", err)
 			}
@@ -604,7 +677,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeExecuteTimeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeExecuteTimeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing ExecuteTime: %w", err)
 			}
@@ -615,7 +688,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeProposalBondGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeProposalBondGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing ProposalBond: %w", err)
 			}
@@ -626,7 +699,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeChallengeBondGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeChallengeBondGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing ChallengeBond: %w", err)
 			}
@@ -637,7 +710,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeChallengePeriodGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeChallengePeriodGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing ChallengePeriod: %w", err)
 			}
@@ -648,7 +721,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeProposalQuorumGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeProposalQuorumGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing ProposalQuorum: %w", err)
 			}
@@ -659,7 +732,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeProposalVetoQuorumGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeProposalVetoQuorumGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing ProposalVetoQuorum: %w", err)
 			}
@@ -670,7 +743,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeProposalMaxBlockAgeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeProposalMaxBlockAgeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing ProposalMaxBlockAge: %w", err)
 			}
@@ -684,7 +757,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeRewardsClaimIntervalTimeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeRewardsClaimIntervalTimeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing RewardsClaimIntervalTime: %w", err)
 			}
@@ -698,7 +771,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeSecurityMembersQuorumGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeSecurityMembersQuorumGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing SecurityMembersQuorum: %w", err)
 			}
@@ -709,7 +782,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeSecurityMembersLeaveTimeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeSecurityMembersLeaveTimeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing SecurityMembersLeaveTime: %w", err)
 			}
@@ -720,7 +793,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeSecurityProposalVoteTimeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeSecurityProposalVoteTimeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing SecurityProposalVoteTime: %w", err)
 			}
@@ -731,7 +804,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeSecurityProposalExecuteTimeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeSecurityProposalExecuteTimeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing SecurityProposalExecuteTime: %w", err)
 			}
@@ -742,16 +815,100 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 			if err != nil {
 				return nil, err
 			}
-			response.GasInfo, err = protocol.EstimateProposeSecurityProposalActionTimeGas(rp, newValue, blockNumber, pollard, opts)
+			response.GasLimits, err = protocol.EstimateProposeSecurityProposalActionTimeGas(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
 				return nil, fmt.Errorf("error estimating gas for proposing SecurityProposalActionTime: %w", err)
 			}
 		}
+
+	case protocol.MegapoolSettingsContractName:
+		switch settingName {
+		// TimeBeforeDissolve
+		case protocol.MegapoolTimeBeforeDissolveSettingsPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = protocol.EstimateProposeMegapoolTimeBeforeDissolve(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing TimeBeforeDissolve: %w", err)
+			}
+		// MaximumEthPenalty
+		case protocol.MegapoolMaximumMegapoolEthPenaltyPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = protocol.EstimateProposeMaximumEthPenalty(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing MaximumEthPenalty: %w", err)
+			}
+		// NotifyThreshold
+		case protocol.MegapoolNotifyThresholdPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = protocol.EstimateProposeNotifyThreshold(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing NotifyThreshold: %w", err)
+			}
+		// LateNofifyFine
+		case protocol.MegapoolLateNotifyFinePath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = protocol.EstimateProposeLateNotifyFine(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing LateNofifyFine: %w", err)
+			}
+		// DissolvePenalty
+		case protocol.MegapoolDissolvePenaltyPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = protocol.EstimateProposeDissolvePenalty(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing DissolvePenalty: %w", err)
+			}
+		// UserDistributeDelay
+		case protocol.MegapoolUserDistributeDelayPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = protocol.EstimateProposeUserDistributeDelay(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing UserDistributeDelay: %w", err)
+			}
+		// UserDistributeDelayWithShortfall
+		case protocol.MegapoolUserDistributeDelayShortfallPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = protocol.EstimateProposeUserDistributeDelayWithShortfall(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing UserDistributeDelayWithShortfall: %w", err)
+			}
+		// PenaltyThreshold
+		case protocol.MegapoolPenaltyThreshold:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			response.GasLimits, err = protocol.EstimateProposePenaltyThreshold(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error estimating gas for proposing PenaltyThreshold: %w", err)
+			}
+		}
+
 	}
 
 	// Make sure a setting was actually hit
-	blankGasInfo := rocketpool.GasInfo{}
-	if response.GasInfo == blankGasInfo {
+	if response.GasLimits.IsBlank() {
 		return nil, fmt.Errorf("[%s - %s] is not a valid PDAO contract and setting name combo", contractName, settingName)
 	}
 
@@ -760,7 +917,7 @@ func canProposeSetting(c *cli.Context, contractName string, settingName string, 
 
 }
 
-func proposeSetting(c *cli.Context, contractName string, settingName string, value string, blockNumber uint32) (*api.ProposePDAOSettingResponse, error) {
+func proposeSetting(c *cli.Command, contractName string, settingName string, value string, blockNumber uint32, opts *bind.TransactOpts) (*api.ProposePDAOSettingResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeWallet(c); err != nil {
@@ -770,10 +927,6 @@ func proposeSetting(c *cli.Context, contractName string, settingName string, val
 		return nil, err
 	}
 	cfg, err := services.GetConfig(c)
-	if err != nil {
-		return nil, err
-	}
-	w, err := services.GetWallet(c)
 	if err != nil {
 		return nil, err
 	}
@@ -793,18 +946,6 @@ func proposeSetting(c *cli.Context, contractName string, settingName string, val
 	pollard, err := getPollard(rp, cfg, bc, blockNumber)
 	if err != nil {
 		return nil, fmt.Errorf("error regenerating pollard: %w", err)
-	}
-
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
 	}
 
 	// Submit the proposal
@@ -1185,6 +1326,67 @@ func proposeSetting(c *cli.Context, contractName string, settingName string, val
 			if err != nil {
 				return nil, fmt.Errorf("error proposing SubmitRewardsEnabled: %w", err)
 			}
+		// NodeShare
+		case protocol.NetworkNodeCommissionSharePath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = protocol.ProposeNodeShare(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing NodeShare: %w", err)
+			}
+		// NodeShareSecurityCouncilAdder
+		case protocol.NetworkNodeCommissionShareSecurityCouncilAdderPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = protocol.ProposeNodeShareSecurityCouncilAdder(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing NodeShareSecurityCouncilAdder: %w", err)
+			}
+		// VoterShare
+		case protocol.NetworkVoterSharePath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = protocol.ProposeVoterShare(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing VoterShare: %w", err)
+			}
+		// ProtocolDAOShare
+		case protocol.NetworkPDAOSharePath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = protocol.ProposeProtocolDAOShare(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing ProtocolDAOShare: %w", err)
+			}
+		// MaxNodeShareSecurityCouncilAdder
+		case protocol.NetworkMaxNodeShareSecurityCouncilAdderPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = protocol.ProposeMaxNodeShareSecurityCouncilAdder(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing MaxNodeShareSecurityCouncilAdder: %w", err)
+			}
+		// MaxRethBalanceDelta
+		case protocol.NetworkMaxRethBalanceDeltaPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = protocol.ProposeMaxRethDelta(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing MaxRethBalanceDelta: %w", err)
+			}
+
 		}
 
 	case protocol.NodeSettingsContractName:
@@ -1232,28 +1434,37 @@ func proposeSetting(c *cli.Context, contractName string, settingName string, val
 			if err != nil {
 				return nil, fmt.Errorf("error proposing VacantMinipoolsEnabled: %w", err)
 			}
-
-		// MinimumPerMinipoolStake
-		case protocol.MinimumPerMinipoolStakeSettingPath:
+		// MinimumLegacyRplStake
+		case protocol.MinimumLegacyRplStakePath:
 			newValue, err := cliutils.ValidateBigInt(valueName, value)
 			if err != nil {
 				return nil, err
 			}
-			proposalID, hash, err = protocol.ProposeMinimumPerMinipoolStake(rp, newValue, blockNumber, pollard, opts)
+			proposalID, hash, err = protocol.ProposeMinimumLecacyRPLStake(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
-				return nil, fmt.Errorf("error proposing MinimumPerMinipoolStake: %w", err)
+				return nil, fmt.Errorf("error proposing MinimumLegacyRplStake: %w", err)
 			}
-
-		// MaximumPerMinipoolStake
-		case protocol.MaximumPerMinipoolStakeSettingPath:
+		// ReducedBond
+		case protocol.ReducedBondSettingPath:
 			newValue, err := cliutils.ValidateBigInt(valueName, value)
 			if err != nil {
 				return nil, err
 			}
-			proposalID, hash, err = protocol.ProposeMaximumPerMinipoolStake(rp, newValue, blockNumber, pollard, opts)
+			proposalID, hash, err = protocol.ProposeReducedBond(rp, newValue, blockNumber, pollard, opts)
 			if err != nil {
-				return nil, fmt.Errorf("error proposing MaximumPerMinipoolStake: %w", err)
+				return nil, fmt.Errorf("error proposing ReduceBond: %w", err)
 			}
+		// NodeUnstakingPeriod
+		case protocol.NodeUnstakingPeriodSettingPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = protocol.ProposeNodeUnstakingPeriod(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing NodeUnstakingPeriod: %w", err)
+			}
+
 		}
 
 	case protocol.ProposalsSettingsContractName:
@@ -1440,6 +1651,92 @@ func proposeSetting(c *cli.Context, contractName string, settingName string, val
 				return nil, fmt.Errorf("error proposing SecurityProposalActionTime: %w", err)
 			}
 		}
+
+	case protocol.MegapoolSettingsContractName:
+		switch settingName {
+		// TimeBeforeDissolve
+		case protocol.MegapoolTimeBeforeDissolveSettingsPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = protocol.ProposeMegapoolTimeBeforeDissolve(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing TimeBeforeDissolve: %w", err)
+			}
+		// MaximumEthPenalty
+		case protocol.MegapoolMaximumMegapoolEthPenaltyPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = protocol.ProposeMaximumEthPenalty(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing MaximumEthPenalty: %w", err)
+			}
+		// NotifyThreshold
+		case protocol.MegapoolNotifyThresholdPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = protocol.ProposeNotifyThreshold(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing NotifyThreshold: %w", err)
+			}
+		// LateNotifyFine
+		case protocol.MegapoolLateNotifyFinePath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = protocol.ProposeLateNotifyFine(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing LateNotifyFine: %w", err)
+			}
+		// DissolvePenalty
+		case protocol.MegapoolDissolvePenaltyPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = protocol.ProposeDissolvePenalty(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing DissolvePenalty: %w", err)
+			}
+		// UserDistributeDelay
+		case protocol.MegapoolUserDistributeDelayPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = protocol.ProposeUserDistributeDelay(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing UserDistributeDelay: %w", err)
+			}
+		// UserDistributeDelayWithShortfall
+		case protocol.MegapoolUserDistributeDelayShortfallPath:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = protocol.ProposeUserDistributeDelayWithShortfall(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing UserDistributeDelayWithShortfall: %w", err)
+			}
+		// PenaltyThreshold
+		case protocol.MegapoolPenaltyThreshold:
+			newValue, err := cliutils.ValidateBigInt(valueName, value)
+			if err != nil {
+				return nil, err
+			}
+			proposalID, hash, err = protocol.ProposePenaltyThreshold(rp, newValue, blockNumber, pollard, opts)
+			if err != nil {
+				return nil, fmt.Errorf("error proposing PenaltyThreshold: %w", err)
+			}
+
+		}
+
 	}
 
 	// Make sure a setting was actually hit

@@ -1,19 +1,20 @@
 package node
 
 import (
-	"fmt"
 	"math/big"
 
-	"github.com/rocket-pool/rocketpool-go/node"
-	"github.com/urfave/cli"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+
+	"github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/rocket-pool/smartnode/bindings/node"
 
 	"github.com/rocket-pool/smartnode/shared/services"
 	"github.com/rocket-pool/smartnode/shared/types/api"
-	"github.com/rocket-pool/smartnode/shared/utils/eth1"
 )
 
-func canNodeWithdrawEth(c *cli.Context, amountWei *big.Int) (*api.CanNodeWithdrawEthResponse, error) {
+func canNodeWithdrawEth(c *cli.Command, amountWei *big.Int) (*api.CanNodeWithdrawEthResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
@@ -62,9 +63,9 @@ func canNodeWithdrawEth(c *cli.Context, amountWei *big.Int) (*api.CanNodeWithdra
 		if err != nil {
 			return err
 		}
-		gasInfo, err := node.EstimateWithdrawEthGas(rp, nodeAccount.Address, amountWei, opts)
+		gasLimits, err := node.EstimateWithdrawEthGas(rp, nodeAccount.Address, amountWei, opts)
 		if err == nil {
-			response.GasInfo = gasInfo
+			response.GasLimits = gasLimits
 		}
 		return err
 	})
@@ -79,12 +80,12 @@ func canNodeWithdrawEth(c *cli.Context, amountWei *big.Int) (*api.CanNodeWithdra
 	response.HasDifferentWithdrawalAddress = (nodeAccount.Address != nodeDetails.PrimaryWithdrawalAddress)
 
 	// Update & return response
-	response.CanWithdraw = !(response.InsufficientBalance || response.HasDifferentWithdrawalAddress)
+	response.CanWithdraw = !response.InsufficientBalance && !response.HasDifferentWithdrawalAddress
 	return &response, nil
 
 }
 
-func nodeWithdrawEth(c *cli.Context, amountWei *big.Int) (*api.NodeWithdrawRplResponse, error) {
+func nodeWithdrawEth(c *cli.Command, amountWei *big.Int, opts *bind.TransactOpts) (*api.NodeWithdrawRplResponse, error) {
 
 	// Get services
 	if err := services.RequireNodeRegistered(c); err != nil {
@@ -102,22 +103,10 @@ func nodeWithdrawEth(c *cli.Context, amountWei *big.Int) (*api.NodeWithdrawRplRe
 	// Response
 	response := api.NodeWithdrawRplResponse{}
 
-	// Get transactor
-	opts, err := w.GetNodeAccountTransactor()
-	if err != nil {
-		return nil, err
-	}
-
 	// Get node account
 	nodeAccount, err := w.GetNodeAccount()
 	if err != nil {
 		return nil, err
-	}
-
-	// Override the provided pending TX if requested
-	err = eth1.CheckForNonceOverride(c, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Error checking for nonce override: %w", err)
 	}
 
 	// Withdraw ETH

@@ -1,32 +1,34 @@
 package security
 
 import (
+	"context"
 	"fmt"
 
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
-	"github.com/rocket-pool/rocketpool-go/settings/protocol"
-	cliutils "github.com/rocket-pool/smartnode/shared/utils/cli"
+	"github.com/rocket-pool/smartnode/bindings/settings/protocol"
+	cliutils "github.com/rocket-pool/smartnode/rocketpool-cli/cli"
 )
 
 const (
-	boolUsage string = "specify 'true', 'false', 'yes', or 'no'"
+	boolUsage    string = "specify 'true', 'false', 'yes', or 'no'"
+	percentUsage string = "specify a percentage between 0 and 1 (e.g., '0.51' for 51%)"
 )
 
 // Register commands
-func RegisterCommands(app *cli.App, name string, aliases []string) {
-	app.Commands = append(app.Commands, cli.Command{
+func RegisterCommands(app *cli.Command, name string, aliases []string) {
+	app.Commands = append(app.Commands, &cli.Command{
 		Name:    name,
 		Aliases: aliases,
 		Usage:   "Manage the Rocket Pool security council",
-		Subcommands: []cli.Command{
+		Commands: []*cli.Command{
 
 			{
 				Name:      "status",
 				Aliases:   []string{"s"},
 				Usage:     "Get security council status",
 				UsageText: "rocketpool security status",
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -34,7 +36,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return getStatus(c)
+					return getStatus()
 
 				},
 			},
@@ -44,7 +46,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Aliases:   []string{"m"},
 				Usage:     "Get the security council members",
 				UsageText: "rocketpool security members",
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -52,7 +54,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return getMembers(c)
+					return getMembers()
 
 				},
 			},
@@ -61,25 +63,26 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Name:    "propose",
 				Aliases: []string{"p"},
 				Usage:   "Make a security council proposal",
-				Subcommands: []cli.Command{
+				Commands: []*cli.Command{
 
 					{
 						Name:    "member",
 						Aliases: []string{"m"},
 						Usage:   "Make a security council member proposal",
-						Subcommands: []cli.Command{
+						Commands: []*cli.Command{
 							{
 								Name:      "leave",
 								Aliases:   []string{"l"},
 								Usage:     "Propose leaving the security council",
 								UsageText: "rocketpool security propose member leave",
 								Flags: []cli.Flag{
-									cli.BoolFlag{
-										Name:  "yes, y",
-										Usage: "Automatically confirm all interactive questions",
+									&cli.BoolFlag{
+										Name:    "yes",
+										Aliases: []string{"y"},
+										Usage:   "Automatically confirm all interactive questions",
 									},
 								},
-								Action: func(c *cli.Context) error {
+								Action: func(ctx context.Context, c *cli.Command) error {
 
 									// Validate args
 									if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -87,7 +90,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 									}
 
 									// Run
-									return proposeLeave(c)
+									return proposeLeave(c.Bool("yes"))
 
 								},
 							},
@@ -97,13 +100,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Name:    "setting",
 						Aliases: []string{"s"},
 						Usage:   "Make a proposal to update a Protocol DAO setting",
-						Subcommands: []cli.Command{
+						Commands: []*cli.Command{
 
 							{
 								Name:    "auction",
 								Aliases: []string{"a"},
 								Usage:   "Auction settings",
-								Subcommands: []cli.Command{
+								Commands: []*cli.Command{
 
 									{
 										Name:      "is-create-lot-enabled",
@@ -111,12 +114,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.CreateLotEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool security propose setting auction is-create-lot-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -128,7 +132,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingAuctionIsCreateLotEnabled(c, value)
+											return proposeSettingAuctionIsCreateLotEnabled(value, c.Bool("yes"))
 
 										},
 									},
@@ -139,12 +143,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.BidOnLotEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool security propose setting auction is-bid-on-lot-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -156,7 +161,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingAuctionIsBidOnLotEnabled(c, value)
+											return proposeSettingAuctionIsBidOnLotEnabled(value, c.Bool("yes"))
 
 										},
 									},
@@ -167,7 +172,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 								Name:    "deposit",
 								Aliases: []string{"d"},
 								Usage:   "Deposit pool settings",
-								Subcommands: []cli.Command{
+								Commands: []*cli.Command{
 
 									{
 										Name:      "is-depositing-enabled",
@@ -175,12 +180,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.DepositEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool security propose setting deposit is-depositing-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -192,7 +198,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingDepositIsDepositingEnabled(c, value)
+											return proposeSettingDepositIsDepositingEnabled(value, c.Bool("yes"))
 
 										},
 									},
@@ -203,12 +209,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.AssignDepositsEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool security propose setting deposit are-deposit-assignments-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -220,7 +227,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingDepositAreDepositAssignmentsEnabled(c, value)
+											return proposeSettingDepositAreDepositAssignmentsEnabled(value, c.Bool("yes"))
 
 										},
 									},
@@ -231,7 +238,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 								Name:    "minipool",
 								Aliases: []string{"m"},
 								Usage:   "Minipool settings",
-								Subcommands: []cli.Command{
+								Commands: []*cli.Command{
 
 									{
 										Name:      "is-submit-withdrawable-enabled",
@@ -239,12 +246,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.MinipoolSubmitWithdrawableEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool security propose setting minipool is-submit-withdrawable-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -256,7 +264,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingMinipoolIsSubmitWithdrawableEnabled(c, value)
+											return proposeSettingMinipoolIsSubmitWithdrawableEnabled(value, c.Bool("yes"))
 
 										},
 									},
@@ -267,12 +275,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.BondReductionEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool security propose setting minipool is-bond-reduction-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -284,7 +293,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingMinipoolIsBondReductionEnabled(c, value)
+											return proposeSettingMinipoolIsBondReductionEnabled(value, c.Bool("yes"))
 
 										},
 									},
@@ -295,7 +304,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 								Name:    "network",
 								Aliases: []string{"ne"},
 								Usage:   "Network settings",
-								Subcommands: []cli.Command{
+								Commands: []*cli.Command{
 
 									{
 										Name:      "is-submit-balances-enabled",
@@ -303,12 +312,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.SubmitBalancesEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool security propose setting network is-submit-balances-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -320,7 +330,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNetworkIsSubmitBalancesEnabled(c, value)
+											return proposeSettingNetworkIsSubmitBalancesEnabled(value, c.Bool("yes"))
 
 										},
 									},
@@ -331,12 +341,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.SubmitPricesEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool security propose setting network is-submit-prices-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -348,7 +359,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNetworkIsSubmitPricesEnabled(c, value)
+											return proposeSettingNetworkIsSubmitPricesEnabled(value, c.Bool("yes"))
 
 										},
 									},
@@ -359,12 +370,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.SubmitRewardsEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool security propose setting network is-submit-rewards-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -376,7 +388,40 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNetworkIsSubmitRewardsEnabled(c, value)
+											return proposeSettingNetworkIsSubmitRewardsEnabled(value, c.Bool("yes"))
+
+										},
+									},
+
+									{
+										Name:      "node-commission-share-council-adder",
+										Aliases:   []string{"ncsca"},
+										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NetworkNodeCommissionShareSecurityCouncilAdderPath, percentUsage),
+										UsageText: "rocketpool security propose setting network node-commission-share-council-adder",
+										Flags: []cli.Flag{
+											&cli.BoolFlag{
+												Name:  "raw",
+												Usage: "Add this flag if your setting is an 18-decimal-fixed-point-integer (wei) value instead of a float",
+											},
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
+											},
+										},
+										Action: func(ctx context.Context, c *cli.Command) error {
+
+											// Validate args
+											if err := cliutils.ValidateArgCount(c, 1); err != nil {
+												return err
+											}
+											value, err := cliutils.ValidateFloat(c.Bool("raw"), "value", c.Args().Get(0), true, c.Bool("yes"))
+											if err != nil {
+												return err
+											}
+
+											// Run
+											return proposeSettingNodeComissionShareSecurityCouncilAdder(value, c.Bool("yes"))
 
 										},
 									},
@@ -387,7 +432,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 								Name:    "node",
 								Aliases: []string{"no"},
 								Usage:   "Node settings",
-								Subcommands: []cli.Command{
+								Commands: []*cli.Command{
 
 									{
 										Name:      "is-registration-enabled",
@@ -395,12 +440,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NodeRegistrationEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool security propose setting node is-registration-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -412,7 +458,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNodeIsRegistrationEnabled(c, value)
+											return proposeSettingNodeIsRegistrationEnabled(value, c.Bool("yes"))
 
 										},
 									},
@@ -423,12 +469,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.SmoothingPoolRegistrationEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool security propose setting node is-smoothing-pool-registration-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -440,7 +487,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNodeIsSmoothingPoolRegistrationEnabled(c, value)
+											return proposeSettingNodeIsSmoothingPoolRegistrationEnabled(value, c.Bool("yes"))
 
 										},
 									},
@@ -451,12 +498,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.NodeDepositEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool security propose setting node is-depositing-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -468,7 +516,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNodeIsDepositingEnabled(c, value)
+											return proposeSettingNodeIsDepositingEnabled(value, c.Bool("yes"))
 
 										},
 									},
@@ -479,12 +527,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 										Usage:     fmt.Sprintf("Propose updating the %s setting; %s", protocol.VacantMinipoolsEnabledSettingPath, boolUsage),
 										UsageText: "rocketpool security propose setting node are-vacant-minipools-enabled value",
 										Flags: []cli.Flag{
-											cli.BoolFlag{
-												Name:  "yes, y",
-												Usage: "Automatically confirm all interactive questions",
+											&cli.BoolFlag{
+												Name:    "yes",
+												Aliases: []string{"y"},
+												Usage:   "Automatically confirm all interactive questions",
 											},
 										},
-										Action: func(c *cli.Context) error {
+										Action: func(ctx context.Context, c *cli.Command) error {
 
 											// Validate args
 											if err := cliutils.ValidateArgCount(c, 1); err != nil {
@@ -496,7 +545,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 											}
 
 											// Run
-											return proposeSettingNodeAreVacantMinipoolsEnabled(c, value)
+											return proposeSettingNodeAreVacantMinipoolsEnabled(value, c.Bool("yes"))
 
 										},
 									},
@@ -511,7 +560,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Name:    "proposals",
 				Aliases: []string{"o"},
 				Usage:   "Manage security council proposals",
-				Subcommands: []cli.Command{
+				Commands: []*cli.Command{
 
 					{
 						Name:      "list",
@@ -519,13 +568,14 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Usage:     "List the security council proposals",
 						UsageText: "rocketpool security proposals list",
 						Flags: []cli.Flag{
-							cli.StringFlag{
-								Name:  "states, s",
-								Usage: "Comma separated list of states to filter ('pending', 'active', 'succeeded', 'executed', 'cancelled', 'defeated', or 'expired')",
-								Value: "",
+							&cli.StringFlag{
+								Name:    "states",
+								Aliases: []string{"s"},
+								Usage:   "Comma separated list of states to filter ('pending', 'active', 'succeeded', 'executed', 'cancelled', 'defeated', or 'expired')",
+								Value:   "",
 							},
 						},
-						Action: func(c *cli.Context) error {
+						Action: func(ctx context.Context, c *cli.Command) error {
 
 							// Validate args
 							if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -533,7 +583,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 							}
 
 							// Run
-							return getProposals(c, c.String("states"))
+							return getProposals(c.String("states"))
 
 						},
 					},
@@ -543,7 +593,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Aliases:   []string{"d"},
 						Usage:     "View proposal details",
 						UsageText: "rocketpool security proposals details proposal-id",
-						Action: func(c *cli.Context) error {
+						Action: func(ctx context.Context, c *cli.Command) error {
 
 							// Validate args
 							var err error
@@ -556,7 +606,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 							}
 
 							// Run
-							return getProposal(c, id)
+							return getProposal(id)
 
 						},
 					},
@@ -567,12 +617,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Usage:     "Cancel a proposal made by the node",
 						UsageText: "rocketpool security proposals cancel",
 						Flags: []cli.Flag{
-							cli.StringFlag{
-								Name:  "proposal, p",
-								Usage: "The ID of the proposal to cancel",
+							&cli.StringFlag{
+								Name:    "proposal",
+								Aliases: []string{"p"},
+								Usage:   "The ID of the proposal to cancel",
 							},
 						},
-						Action: func(c *cli.Context) error {
+						Action: func(ctx context.Context, c *cli.Command) error {
 
 							// Validate args
 							if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -587,7 +638,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 							}
 
 							// Run
-							return cancelProposal(c)
+							return cancelProposal(c.String("proposal"), c.Bool("yes"))
 
 						},
 					},
@@ -598,20 +649,23 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Usage:     "Vote on a proposal",
 						UsageText: "rocketpool security proposals vote",
 						Flags: []cli.Flag{
-							cli.StringFlag{
-								Name:  "proposal, p",
-								Usage: "The ID of the proposal to vote on",
+							&cli.StringFlag{
+								Name:    "proposal",
+								Aliases: []string{"p"},
+								Usage:   "The ID of the proposal to vote on",
 							},
-							cli.StringFlag{
-								Name:  "support, s",
-								Usage: "Whether to support the proposal ('yes' or 'no')",
+							&cli.StringFlag{
+								Name:    "support",
+								Aliases: []string{"s"},
+								Usage:   "Whether to support the proposal ('yes' or 'no')",
 							},
-							cli.BoolFlag{
-								Name:  "yes, y",
-								Usage: "Automatically confirm vote",
+							&cli.BoolFlag{
+								Name:    "yes",
+								Aliases: []string{"y"},
+								Usage:   "Automatically confirm vote",
 							},
 						},
-						Action: func(c *cli.Context) error {
+						Action: func(ctx context.Context, c *cli.Command) error {
 
 							// Validate args
 							if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -631,7 +685,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 							}
 
 							// Run
-							return voteOnProposal(c)
+							return voteOnProposal(c.String("proposal"), c.String("support"), c.Bool("yes"))
 
 						},
 					},
@@ -642,12 +696,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 						Usage:     "Execute a proposal",
 						UsageText: "rocketpool security proposals execute",
 						Flags: []cli.Flag{
-							cli.StringFlag{
-								Name:  "proposal, p",
-								Usage: "The ID of the proposal to execute (or 'all')",
+							&cli.StringFlag{
+								Name:    "proposal",
+								Aliases: []string{"p"},
+								Usage:   "The ID of the proposal to execute (or 'all')",
 							},
 						},
-						Action: func(c *cli.Context) error {
+						Action: func(ctx context.Context, c *cli.Command) error {
 
 							// Validate args
 							if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -662,7 +717,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 							}
 
 							// Run
-							return executeProposal(c)
+							return executeProposal(c.String("proposal"), c.Bool("yes"))
 
 						},
 					},
@@ -675,12 +730,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Usage:     "Join the security council (requires an executed invite proposal)",
 				UsageText: "rocketpool security join",
 				Flags: []cli.Flag{
-					cli.BoolFlag{
-						Name:  "yes, y",
-						Usage: "Automatically confirm joining",
+					&cli.BoolFlag{
+						Name:    "yes",
+						Aliases: []string{"y"},
+						Usage:   "Automatically confirm joining",
 					},
 				},
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -688,7 +744,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return join(c)
+					return join(c.Bool("yes"))
 
 				},
 			},
@@ -699,12 +755,13 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 				Usage:     "Leave the security council (requires an executed leave proposal)",
 				UsageText: "rocketpool security leave",
 				Flags: []cli.Flag{
-					cli.BoolFlag{
-						Name:  "yes, y",
-						Usage: "Automatically confirm leaving",
+					&cli.BoolFlag{
+						Name:    "yes",
+						Aliases: []string{"y"},
+						Usage:   "Automatically confirm leaving",
 					},
 				},
-				Action: func(c *cli.Context) error {
+				Action: func(ctx context.Context, c *cli.Command) error {
 
 					// Validate args
 					if err := cliutils.ValidateArgCount(c, 0); err != nil {
@@ -712,7 +769,7 @@ func RegisterCommands(app *cli.App, name string, aliases []string) {
 					}
 
 					// Run
-					return leave(c)
+					return leave(c.Bool("yes"))
 
 				},
 			},

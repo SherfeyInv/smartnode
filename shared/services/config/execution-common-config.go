@@ -38,6 +38,12 @@ type ExecutionCommonConfig struct {
 	// P2P traffic port
 	P2pPort config.Parameter `yaml:"p2pPort,omitempty"`
 
+	// The suggested block gas limit
+	SuggestedBlockGasLimit config.Parameter `yaml:"suggestedBlockGasLimit,omitempty"`
+
+	// If the client should expire history
+	PruningMode config.Parameter `yaml:"pruningMode,omitempty"`
+
 	// Label for Ethstats
 	EthstatsLabel config.Parameter `yaml:"ethstatsLabel,omitempty"`
 
@@ -58,7 +64,7 @@ func NewExecutionCommonConfig(cfg *RocketPoolConfig) *ExecutionCommonConfig {
 			Description:        "The port your Execution client should use for its HTTP API endpoint (also known as HTTP RPC API endpoint).",
 			Type:               config.ParameterType_Uint16,
 			Default:            map[config.Network]interface{}{config.Network_All: defaultEcHttpPort},
-			AffectsContainers:  []config.ContainerID{config.ContainerID_Api, config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Eth1, config.ContainerID_Eth2},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Node, config.ContainerID_Watchtower, config.ContainerID_Eth1, config.ContainerID_Eth2},
 			CanBeBlank:         false,
 			OverwriteOnUpgrade: false,
 		},
@@ -97,10 +103,49 @@ func NewExecutionCommonConfig(cfg *RocketPoolConfig) *ExecutionCommonConfig {
 			Options:            rpcPortModes,
 		},
 
+		SuggestedBlockGasLimit: config.Parameter{
+			ID:                 "suggestedBlockGasLimit",
+			Name:               "Suggested Block Gas Limit",
+			Description:        "The block gas limit that should be used for locally built blocks. Leave blank to follow the Execution Client's default.",
+			Type:               config.ParameterType_String,
+			Default:            map[config.Network]interface{}{config.Network_All: ""},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
+			CanBeBlank:         true,
+			OverwriteOnUpgrade: false,
+		},
+
+		PruningMode: config.Parameter{
+			ID:                 "pruningMode",
+			Name:               "Pruning Mode",
+			Description:        "How much execution-layer history the client keeps. Rolling History Expiry drops block bodies and receipts older than about one year. History Expiry only drops pre-merge bodies and receipts. Full node keeps all history. Archive keeps history and historical state.",
+			Type:               config.ParameterType_Choice,
+			Default:            map[config.Network]interface{}{config.Network_All: config.PruningMode_RollingHistoryExpiry},
+			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
+			CanBeBlank:         true,
+			OverwriteOnUpgrade: false,
+			Options: []config.ParameterOption{{
+				Name:        "Rolling History Expiry",
+				Description: "Drop block bodies and receipts older than about one year. Nethermind, Besu, and Reth support this. Geth does not yet and will use pre-Prague history expiry instead.",
+				Value:       config.PruningMode_RollingHistoryExpiry,
+			}, {
+				Name:        "History Expiry",
+				Description: "Drop pre-merge block bodies and receipts (EIP-4444 partial history expiry). Keeps all post-merge history.",
+				Value:       config.PruningMode_HistoryExpiry,
+			}, {
+				Name:        "Full node",
+				Description: "Keep the usual full node data, including all block bodies and receipts.",
+				Value:       config.PruningMode_FullNode,
+			}, {
+				Name:        "Archive",
+				Description: "Keep all history and historical state. Uses much more disk.",
+				Value:       config.PruningMode_Archive,
+			}},
+		},
+
 		P2pPort: config.Parameter{
 			ID:                 "p2pPort",
 			Name:               "P2P Port",
-			Description:        "The port Geth should use for P2P (blockchain) traffic to communicate with other nodes.",
+			Description:        "The port the Execution Client should use for P2P (blockchain) traffic to communicate with other nodes.",
 			Type:               config.ParameterType_Uint16,
 			Default:            map[config.Network]interface{}{config.Network_All: defaultEcP2pPort},
 			AffectsContainers:  []config.ContainerID{config.ContainerID_Eth1},
@@ -139,13 +184,15 @@ func (cfg *ExecutionCommonConfig) GetParameters() []*config.Parameter {
 		&cfg.WsPort,
 		&cfg.EnginePort,
 		&cfg.OpenRpcPorts,
+		&cfg.SuggestedBlockGasLimit,
+		&cfg.PruningMode,
 		&cfg.P2pPort,
 		&cfg.EthstatsLabel,
 		&cfg.EthstatsLogin,
 	}
 }
 
-// The the title for the config
+// The title for the config
 func (cfg *ExecutionCommonConfig) GetConfigTitle() string {
 	return cfg.Title
 }

@@ -3,10 +3,12 @@ package alerting
 import (
 	"fmt"
 	"log"
+	"maps"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/go-openapi/strfmt"
+
 	apiclient "github.com/rocket-pool/smartnode/shared/services/alerting/alertmanager/client"
 	apialert "github.com/rocket-pool/smartnode/shared/services/alerting/alertmanager/client/alert"
 	"github.com/rocket-pool/smartnode/shared/services/alerting/alertmanager/models"
@@ -192,6 +194,45 @@ func getAlertSettingsForEvent(succeeded bool) (strfmt.DateTime, Severity, string
 	return endsAt, severity, succeededOrFailedText
 }
 
+// Sends an alert when the node has minipools that can have their use latest delegate set.
+func AlertMinipoolUseLatestDelegateSet(cfg *config.RocketPoolConfig) error {
+	alert := createAlert(
+		"MinipoolUseLatestDelegateSet",
+		"Minipools can have the 'use latest delegate' flag set",
+		"Starting with v1.19.1, the Smart Node includes an automatic task that will set all legacy minipools to use the latest delegate contract. For Megapools, node operators continue to have 120 days to choose when to upgrade after a new delegate is released. If you do not wish to opt into using the latest delegate contract on your minipools, you should rollback to v1.19.0.",
+		SeverityWarning,
+		strfmt.DateTime(time.Now().Add(DefaultEndsAtDurationForSeverityInfo)),
+		nil,
+	)
+	return sendAlert(alert, cfg)
+}
+
+// Sends an alert when the execution client's P2P port is not accessible from the internet.
+func AlertEth1P2PPortNotOpen(cfg *config.RocketPoolConfig, port uint16) error {
+	alert := createAlert(
+		fmt.Sprintf("Eth1P2PPortNotOpen-%d", port),
+		fmt.Sprintf("Execution Client P2P Port %d Not Accessible", port),
+		fmt.Sprintf("The execution client P2P port %d is not accessible from the internet. Check your firewall and port forwarding settings.", port),
+		SeverityCritical,
+		strfmt.DateTime(time.Now().Add(DefaultEndsAtDurationForSeverityInfo)),
+		map[string]string{"port": fmt.Sprintf("%d", port)},
+	)
+	return sendAlert(alert, cfg)
+}
+
+// Sends an alert when the beacon chain's P2P port is not accessible from the internet.
+func AlertBeaconP2PPortNotOpen(cfg *config.RocketPoolConfig, port uint16) error {
+	alert := createAlert(
+		fmt.Sprintf("BeaconP2PPortNotOpen-%d", port),
+		fmt.Sprintf("Consensus Client P2P Port %d Not Accessible", port),
+		fmt.Sprintf("The consensus client P2P port %d is not accessible from the internet. This may affect validator performance. Check your firewall and port forwarding settings.", port),
+		SeverityCritical,
+		strfmt.DateTime(time.Now().Add(DefaultEndsAtDurationForSeverityInfo)),
+		map[string]string{"port": fmt.Sprintf("%d", port)},
+	)
+	return sendAlert(alert, cfg)
+}
+
 func AlertExecutionClientSyncComplete(cfg *config.RocketPoolConfig) error {
 	if cfg.Alertmanager.AlertEnabled_ExecutionClientSyncComplete.Value != true {
 		logMessage("alert for ExecutionClientSyncComplete is disabled, not sending.")
@@ -215,10 +256,35 @@ const (
 	ClientKindBeacon    ClientKind = "Beacon"
 )
 
+// Sends an alert while the node/watchtower daemon is running in observe (masquerade) mode.
+// Called on every task loop iteration for as long as observe mode is active.
+// If alerting/metrics are disabled, this function does nothing.
+func AlertObserveModeActive(cfg *config.RocketPoolConfig, observedAddress common.Address) error {
+	if !isAlertingEnabled(cfg) {
+		logMessage("alerting is disabled, not sending AlertObserveModeActive.")
+		return nil
+	}
+
+	if cfg.Alertmanager.AlertEnabled_ObserveModeActive.Value != true {
+		logMessage("alert for ObserveModeActive is disabled, not sending.")
+		return nil
+	}
+
+	alert := createAlert(
+		fmt.Sprintf("ObserveModeActive-%s", observedAddress.Hex()),
+		"Node is running in observe mode",
+		fmt.Sprintf("The node/watchtower daemon is observing address %s and will not submit transactions. Run `rocketpool wallet end-masquerade` and restart the node/watchtower daemons when you have finished observing.", observedAddress.Hex()),
+		SeverityWarning,
+		strfmt.DateTime(time.Now().Add(DefaultEndsAtDurationForSeverityInfo)),
+		map[string]string{"address": observedAddress.Hex()},
+	)
+	return sendAlert(alert, cfg)
+}
+
 func alertClientSyncComplete(cfg *config.RocketPoolConfig, client ClientKind) error {
 	alertName := fmt.Sprintf("%sClientSyncComplete", client)
 	if !isAlertingEnabled(cfg) {
-		logMessage(fmt.Sprintf("alerting is disabled, not sending %s.", alertName))
+		logMessage("alerting is disabled, not sending %s.", alertName)
 		return nil
 	}
 
@@ -273,9 +339,7 @@ func createAlert(uniqueName string, summary string, description string, severity
 		EndsAt: endsAt,
 	}
 
-	for k, v := range extraLabels {
-		alert.Labels[k] = v
-	}
+	maps.Copy(alert.Labels, extraLabels)
 	return alert
 }
 
